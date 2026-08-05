@@ -1,0 +1,32 @@
+===== Task 3.1: persistence across restart =====
+--- 1. create a job via the API ---
+{
+    "title": "Persistence Test Job",
+    "description": "Testing Docker volumes",
+    "company": "Lab Inc",
+    "location": "Docker",
+    "salary_range": null,
+    "id": "de1138c5-58bd-4eba-856e-470f8b2a9bc7",
+    "created_at": "2026-08-05T05:18:11.647692Z"
+}
+
+--- job count before restart ---
+total jobs: 6
+
+--- 2. docker compose stop && docker compose start ---
+ Container jobboard-db Stopping 
+ Container jobboard-db Stopped 
+ Container nginx-proxy Starting 
+ Container nginx-proxy Started 
+   waiting for health...
+NAME                   STATUS
+applications-service   Up 52 seconds (healthy)
+jobboard-db            Up 58 seconds (healthy)
+jobboard-frontend      Up 46 seconds (healthy)
+jobs-service           Up 52 seconds (healthy)
+nginx-proxy            Up 45 seconds (healthy)
+
+--- 3. verify the job survived ---
+total jobs: 6
+Persistence Test Job present: True
+  id: de1138c5-58bd-4eba-856e-470f8b2a9bc7

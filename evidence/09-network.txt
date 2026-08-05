@@ -1,0 +1,27 @@
+===== Task 5.1: docker network inspect =====
+Name:    jobboard-network
+Driver:  bridge
+Scope:   local
+Subnet:  172.20.0.0/16  Gateway: 172.20.0.1
+
+CONTAINER                IPv4                 MAC                 
+applications-service     172.20.0.3/16        86:33:07:7a:26:11   
+jobboard-db              172.20.0.2/16        b2:4d:1d:67:13:23   
+jobboard-frontend        172.20.0.5/16        aa:fd:31:5e:df:62   
+jobs-service             172.20.0.4/16        12:29:b0:0c:96:d3   
+nginx-proxy              172.20.0.6/16        b6:0c:85:58:ad:af   
+
+===== Task 5.1: is jobs-service reachable from the host/browser? =====
+--- published ports (only nginx publishes) ---
+NAME                   PORTS
+applications-service   3001/tcp
+jobboard-db            5432/tcp
+jobboard-frontend      80/tcp
+jobs-service           8000/tcp
+nginx-proxy            0.0.0.0:80->80/tcp, [::]:80->80/tcp
+
+--- attempt to reach jobs-service:8000 from the host, as a browser would ---
+http://jobs-service:8000/health -> 000
+  failed: hostname does not resolve on the host (expected)
+http://localhost:8000/health -> 000
+  failed: port 8000 not published to the host (expected)

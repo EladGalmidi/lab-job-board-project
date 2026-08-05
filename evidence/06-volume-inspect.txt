@@ -1,0 +1,43 @@
+===== Task 3.2: volume inspection =====
+[
+    {
+        "CreatedAt": "2026-08-05T05:13:55Z",
+        "Driver": "local",
+        "Labels": {
+            "com.docker.compose.config-hash": "51cb1b890dca508cb1c6e869d49a43bf77eb2b579d8769998c61578da7750fb3",
+            "com.docker.compose.project": "jobboard",
+            "com.docker.compose.version": "5.1.3",
+            "com.docker.compose.volume": "postgres-data"
+        },
+        "Mountpoint": "/var/lib/docker/volumes/jobboard-postgres-data/_data",
+        "Name": "jobboard-postgres-data",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+
+--- docker volume ls ---
+DRIVER    VOLUME NAME
+local     jobboard-postgres-data
+
+--- where the data really lives (Docker Desktop runs a Linux VM) ---
+Unable to find image 'alpine:latest' locally
+latest: Pulling from library/alpine
+56dceff11b33: Download complete
+f5124fb579e2: Download complete
+Digest: sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+Status: Downloaded newer image for alpine:latest
+PG_VERSION
+base
+global
+pg_commit_ts
+pg_dynshmem
+pg_hba.conf
+pg_ident.conf
+pg_logical
+pg_multixact
+pg_notify
+pg_replslot
+pg_serial
+...
+46.2M	/data

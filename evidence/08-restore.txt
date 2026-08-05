@@ -1,0 +1,40 @@
+===== Task 3.3: RESTORE executed against a fresh container =====
+using backup: backup_20260805_081937.sql
+
+--- state before restore ---
+Did not find any relations.
+
+--- 4. run psql to restore ---
+SET
+CREATE TABLE
+CREATE TABLE
+COPY 0
+COPY 6
+ALTER TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+ALTER TABLE
+
+--- 5. verify the restored data ---
+ job_count 
+-----------
+         6
+(1 row)
+
+             title             |      company      
+-------------------------------+-------------------
+ Senior DevOps Engineer        | TechCorp Ltd.
+ Backend Developer (Python)    | StartupXYZ
+ Cloud Architect               | CloudSystems Inc.
+ Frontend Engineer (React)     | ProductLab
+ Security Engineer (DevSecOps) | SecureOps
+ Persistence Test Job          | Lab Inc
+(6 rows)
+
+--- compare against the live database ---
+ live_job_count 
+----------------
+              6
+(1 row)
+
