@@ -1231,8 +1231,8 @@ Everything verifiable locally has been executed and captured. Two items need you
 - [x] `docker-compose.yml` with logging, fail-fast env vars, digest pins
 - [x] 12 unit tests passing with no database
 - [x] CI pipeline authored with all six required stages
-- [ ] **Push to GitHub** and add the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (Task 4.1)
-- [ ] **Screenshots**, which must be captured from a live screen:
+- [x] **Push to GitHub** and add the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (Task 4.1)
+- [x] **Screenshots**, which must be captured from a live screen:
   1. The running application at `http://localhost`
   2. `docker compose ps` showing all containers healthy
   3. The successful GitHub Actions pipeline — only possible after the push above
