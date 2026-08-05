@@ -144,31 +144,30 @@ jobs:
       - name: Load image
         run: docker load --input /tmp/${{ matrix.service }}.tar
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.73.0
+          trivy --version
+
       - name: Scan with Trivy (report)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: jobboard-${{ matrix.service }}:${{ github.sha }}
-          format: table
-          output: trivy-${{ matrix.service }}.txt
-          severity: CRITICAL,HIGH
-          scanners: vuln
-          # exit-code 0: always produce a report rather than failing the build
-          # here. The hard gate is the separate step below.
-          exit-code: "0"
+        run: |
+          trivy image \
+            --format table \
+            --output trivy-${{ matrix.service }}.txt \
+            --severity CRITICAL,HIGH \
+            --scanners vuln \
+            --exit-code 0 \
+            jobboard-${{ matrix.service }}:${{ github.sha }}
 
       - name: Fail on CRITICAL vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: jobboard-${{ matrix.service }}:${{ github.sha }}
-          format: table
-          severity: CRITICAL
-          scanners: vuln
-          ignore-unfixed: true
-          # Task 1 brought every image to zero CRITICALs, so this gate is
-          # meaningful: it stops a regression from being merged. ignore-unfixed
-          # keeps the build green for CVEs with no available patch, which would
-          # otherwise be an unactionable failure.
-          exit-code: "1"
+        run: |
+          trivy image \
+            --format table \
+            --severity CRITICAL \
+            --scanners vuln \
+            --ignore-unfixed \
+            --exit-code 1 \
+            jobboard-${{ matrix.service }}:${{ github.sha }}
 
       - name: Upload scan report
         if: always()
