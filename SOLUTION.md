@@ -242,3 +242,203 @@ runs on the CI runner, not inside the image.
 
 **All 5 CRITICAL vulnerabilities eliminated; 214 total findings reduced to 14.** The stack
 remains fully functional with all five containers healthy.
+
+---
+
+## Task 2 — Docker Compose Orchestration (25 pts)
+
+### 2.1 Logging configuration (8 pts)
+
+A `logging` block was added to **all five** services:
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+Verified as applied by the daemon, not merely present in the file:
+
+```
+$ docker inspect jobs-service --format '{{json .HostConfig.LogConfig}}'
+{"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}
+
+$ docker compose config | grep -c "max-size"
+5
+```
+
+Without this, `json-file` logs grow unbounded until they fill the disk — a container stuck in
+a crash loop writing stack traces can consume tens of GB overnight. The setting caps each
+service at 10 MB × 3 files = 30 MB, after which the oldest file is discarded.
+
+### 2.2 Environment variable isolation (9 pts)
+
+The original file used `${POSTGRES_PASSWORD:-jobboard123}`. That form supplies a default when
+the variable is unset, which means **deleting `.env` would not break the stack** — it would
+quietly start PostgreSQL with a weak, hard-coded password that is committed in the repository.
+That is precisely the failure mode this task asks you to demonstrate, so the syntax was
+changed to the required form `${VAR:?message}`:
+
+```yaml
+POSTGRES_DB:       ${POSTGRES_DB:?POSTGRES_DB is required - copy .env.example to .env}
+POSTGRES_USER:     ${POSTGRES_USER:?POSTGRES_USER is required - copy .env.example to .env}
+POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - copy .env.example to .env}
+```
+
+**Step 3 — confirm that removing `.env` breaks the stack** (`evidence/02-env-failfast.txt`):
+
+```
+$ mv .env .env.backup && docker compose up -d
+error while interpolating services.postgres.environment.POSTGRES_DB:
+  required variable POSTGRES_DB is missing a value:
+  POSTGRES_DB is required - copy .env.example to .env
+exit code: 1
+```
+
+Nothing starts at all. After restoring `.env`, `docker compose config --quiet` validates again.
+
+**Step 2 — strong password.** 24 characters, mixed case, digits and symbols. Character
+selection was constrained deliberately, and this is a real trap in this stack:
+
+- `$` is excluded because Compose interpolates `.env` values, so a password containing
+  `$vLpZr` would be read as a variable reference rather than as literal text;
+- `@ : / #` are excluded because the password is embedded in
+  `postgresql://user:password@postgres:5432/db`, where those characters are URI delimiters —
+  `#` would begin a fragment and `@` would break the userinfo/host split.
+
+Only `! - _ . ~` are used, all legal unencoded in a URI userinfo field. Verified end to end:
+
+```
+$ docker compose config | grep DATABASE_URL
+DATABASE_URL: postgresql://postgres:Kp9-Zr4Tn_Wd7.Lqx~Mv2!Bs@postgres:5432/jobboard
+```
+
+**Step 4 — `.env` is not committed:**
+
+```
+$ git check-ignore -v .env
+.gitignore:2:.env	.env
+```
+
+**Why committing `.env` is a security risk.** Git history is permanent and distributed.
+Deleting the file in a later commit does not remove it — the blob stays reachable from every
+earlier commit, in every clone, fork and CI cache. A leaked production password must therefore
+be treated as compromised and rotated; removing it from `HEAD` accomplishes nothing. Public
+repositories are continuously scraped by automated scanners, and pushed credentials are
+routinely exploited within minutes. Secrets in a repository also defeat access control:
+everyone with read access to the code obtains production credentials, whether or not they
+should have them.
+
+Tooling that prevents it:
+
+| Tool | Where it runs | What it does |
+|---|---|---|
+| `git-secrets` | pre-commit hook | Blocks commits matching credential patterns before they enter history |
+| `truffleHog` | CI or ad-hoc | Scans full history, not just `HEAD`, using entropy analysis and live-credential verification |
+| `gitleaks` | pre-commit + CI | Rule-based scanning, commonly used as a CI gate |
+| GitHub secret scanning + push protection | server side | Detects known provider token formats and can reject the push outright |
+
+The durable fix is to keep secrets out of the repository entirely — a secrets manager (Vault,
+AWS Secrets Manager) or Docker/Kubernetes secrets, as implemented in Task 6.1.
+
+### 2.3 Service restart policy and dependency ordering (8 pts)
+
+Observed startup sequence (`evidence/03-startup-order.txt`), matching the expected order:
+
+```
+Container jobboard-db           Starting -> Started
+Container jobboard-db           Waiting  -> Healthy      <-- gate
+Container applications-service  Starting -> Started
+Container jobs-service          Starting -> Started
+Container applications-service  Waiting  -> Healthy      <-- gate
+Container jobs-service          Waiting  -> Healthy      <-- gate
+Container jobboard-frontend     Starting -> Started
+Container nginx-proxy           Starting -> Started
+```
+
+**Dependency graph**
+
+```
+                        +--------------+
+                        |   postgres   |   (no dependencies)
+                        |  jobboard-db |
+                        +------+-------+
+                               | condition: service_healthy
+                 +-------------+-------------+
+                 v                           v
+        +-----------------+        +-----------------------+
+        |  jobs-service   |        | applications-service  |
+        |  FastAPI :8000  |        |    Express :3001      |
+        +--------+--------+        +-----------+-----------+
+                 | condition: service_healthy  |
+                 +-------------+---------------+
+                               v
+                       +---------------+
+                       |   frontend    |
+                       |  React :80    |
+                       +-------+-------+
+                               | plain depends_on == service_started
+                               v
+                       +---------------+
+                       |     nginx     |   :80 published to the host
+                       +---------------+
+```
+
+**`condition: service_healthy` vs `condition: service_started`**
+
+`service_started` waits only until the container is *running* — the process has been spawned.
+For a database that is nearly useless: PostgreSQL is running long before it can accept
+connections, so a dependent service starting at that instant gets `connection refused` and
+exits. `service_healthy` instead waits for the container's `healthcheck` to pass — here
+`pg_isready -U postgres -d jobboard`, which confirms the server is genuinely accepting
+queries. That is why both API services gate on `service_healthy`, and it is what prevents the
+"`jobs-service` exits immediately" symptom listed in the lab's troubleshooting table.
+
+Note that `nginx` uses the plain list form of `depends_on`, which is equivalent to
+`service_started` and does *not* wait for the frontend to be healthy. That is acceptable here
+because nginx re-resolves and retries upstreams per request, so the cost of being early is a
+transient `502` rather than a crash.
+
+**What happens if postgres crashes after the other services are running?**
+
+Measured with `docker compose stop postgres` (`evidence/04-postgres-stop.txt`):
+
+```
+NAME                   STATUS
+applications-service   Up (healthy)          <-- still reported healthy
+jobboard-db            Exited (0)
+jobboard-frontend      Up (healthy)
+jobs-service           Up (healthy)          <-- still reported healthy
+nginx-proxy            Up (healthy)
+
+GET /api/jobs          -> 500  Internal Server Error
+GET /api/applications/ -> 500
+GET /                  -> 200  (static assets unaffected)
+```
+
+Three observations, the second of which is the important one:
+
+1. **`depends_on` governs startup order only, never runtime.** Once started, the dependent
+   containers are entirely unaffected by the database disappearing — Compose neither stops
+   nor restarts them.
+
+2. **The healthchecks are misleading.** Both API services kept reporting `healthy` while
+   failing 100% of real requests, because `/health` returns a hard-coded
+   `{"status": "healthy"}` without ever touching the database. In production this is
+   actively dangerous: an orchestrator would keep routing traffic to a service that cannot
+   serve any of it, and would never restart it or pull it from the load-balancer pool. The
+   correct split is to keep the *liveness* probe shallow (is the process wedged?) but have
+   the *readiness* probe execute something like `SELECT 1`, so that dependency failure
+   actually removes the pod from rotation. The same flaw is inherited by the Kubernetes
+   manifests, where `readinessProbe` and `livenessProbe` both point at this same `/health`.
+
+3. **Recovery is automatic.** After `docker compose start postgres`, `GET /api/jobs` returned
+   `200` again with no restart of the API services, because SQLAlchemy is configured with
+   `pool_pre_ping=True` (`jobs-service/app/database.py:10`) and node-postgres' `Pool`
+   reconnects on demand.
+
+`restart: unless-stopped` is set on every service, so containers return automatically after a
+daemon restart or host reboot, but *not* after a deliberate `docker compose stop` — which is
+the intended distinction.

@@ -1,0 +1,27 @@
+===== Task 2.3: startup ordering =====
+$ docker compose up --build 2>&1 | grep -E 'healthy|started|Starting|Waiting|Created'
+ Network jobboard-network Created 
+ Volume jobboard-postgres-data Created 
+ Container jobboard-db Created 
+ Container jobs-service Created 
+ Container applications-service Created 
+ Container jobboard-frontend Created 
+ Container nginx-proxy Created 
+ Container jobboard-db Starting 
+ Container jobboard-db Started 
+ Container jobboard-db Waiting 
+ Container jobboard-db Waiting 
+ Container jobboard-db Healthy 
+ Container applications-service Starting 
+ Container jobboard-db Healthy 
+ Container jobs-service Starting 
+ Container jobs-service Started 
+ Container applications-service Started 
+ Container jobs-service Waiting 
+ Container applications-service Waiting 
+ Container applications-service Healthy 
+ Container jobs-service Healthy 
+ Container jobboard-frontend Starting 
+ Container jobboard-frontend Started 
+ Container nginx-proxy Starting 
+ Container nginx-proxy Started 

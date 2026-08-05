@@ -1,0 +1,10 @@
+===== Task 2.2: stack MUST fail without .env =====
+$ mv .env .env.backup && docker compose up -d
+time="2026-08-05T08:13:39+03:00" level=warning msg="The \"POSTGRES_USER\" variable is not set. Defaulting to a blank string."
+time="2026-08-05T08:13:39+03:00" level=warning msg="The \"POSTGRES_DB\" variable is not set. Defaulting to a blank string."
+error while interpolating services.postgres.environment.POSTGRES_DB: required variable POSTGRES_DB is missing a value: POSTGRES_DB is required - copy .env.example to .env
+   exit code: 1
+
+===== restoring .env =====
+$ docker compose config --quiet && echo OK
+config valid again: OK

@@ -1,0 +1,31 @@
+===== Task 2.3: what happens if postgres stops while others run =====
+$ docker compose stop postgres
+ Container jobboard-db Stopping 
+ Container jobboard-db Stopped 
+
+--- container states ---
+NAME                   STATUS
+applications-service   Up About a minute (healthy)
+jobboard-db            Exited (0) 12 seconds ago
+jobboard-frontend      Up About a minute (healthy)
+jobs-service           Up About a minute (healthy)
+nginx-proxy            Up About a minute (healthy)
+
+--- API behaviour with the database down ---
+GET /api/jobs        -> 500
+GET /api/applications/ -> 500
+GET /  (frontend)    -> 200
+
+--- jobs-service error detail ---
+Internal Server Error
+
+$ docker compose start postgres
+ Container jobboard-db Starting 
+ Container jobboard-db Started 
+NAME                   STATUS
+applications-service   Up 2 minutes (healthy)
+jobboard-db            Up 30 seconds (healthy)
+jobboard-frontend      Up 2 minutes (healthy)
+jobs-service           Up 2 minutes (healthy)
+nginx-proxy            Up 2 minutes (healthy)
+GET /api/jobs after recovery -> 200
