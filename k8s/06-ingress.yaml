@@ -1,0 +1,93 @@
+# ============================================================
+# Ingress Resources
+#
+# Requires: nginx ingress controller installed
+#   minikube addons enable ingress
+#   OR: helm install ingress-nginx ingress-nginx/ingress-nginx
+#
+# Traffic flow:
+#   /api/jobs(/|$)(.*) → jobs-service:8000      → /jobs/$2
+#   /api/applications(/|$)(.*) → applications-service:3001 → /applications/$2
+#   /                  → frontend:80            → /
+#
+# NOTE: Each Ingress uses a different rewrite-target annotation,
+#       so they must be separate objects (nginx ingress limitation).
+# ============================================================
+
+# ── 1. Jobs Service Ingress ───────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jobs-ingress
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: jobs-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex:       "true"
+    nginx.ingress.kubernetes.io/rewrite-target:  /jobs/$2
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/limit-rps:       "30"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api/jobs(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: jobs-service
+                port:
+                  number: 8000
+
+---
+# ── 2. Applications Service Ingress ──────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: applications-ingress
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: applications-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex:       "true"
+    nginx.ingress.kubernetes.io/rewrite-target:  /applications/$2
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/limit-rps:       "30"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api/applications(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: applications-service
+                port:
+                  number: 3001
+
+---
+# ── 3. Frontend Ingress (catch-all, lowest priority) ─────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: frontend-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffer-size:    "128k"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

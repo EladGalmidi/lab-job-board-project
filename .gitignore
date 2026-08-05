@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
+.venv/
+
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Frontend build
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes secrets (never commit real values)
+k8s/01-secret.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp

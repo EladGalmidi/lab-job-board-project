@@ -1,0 +1,31 @@
+# ============================================================
+# Kustomize – deploy the entire stack with one command:
+#
+#   kubectl apply -k k8s/
+#
+# Prerequisites:
+#   1. Copy 01-secret.yaml.example → 01-secret.yaml and fill in values
+#   2. Build & load images into minikube (see README-k8s.md)
+# ============================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jobboard
+
+resources:
+  - 00-namespace.yaml
+  - 01-secret.yaml          # copy from 01-secret.yaml.example first!
+  - 02-postgres.yaml
+  - 03-jobs-service.yaml
+  - 04-applications-service.yaml
+  - 05-frontend.yaml
+  - 06-ingress.yaml
+  - 07-hpa.yaml
+
+# Uncomment after all services are Running + Ready:
+# - 08-seed-job.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: jobboard
+  app.kubernetes.io/managed-by: kustomize

@@ -1,0 +1,77 @@
+# ============================================================
+# Seed Job – populates initial job listings via the REST API
+#
+# Run AFTER all services are Running + Ready:
+#   kubectl apply -f 08-seed-job.yaml -n jobboard
+#   kubectl logs -f job/seed-database -n jobboard
+#
+# The job uses curl to POST jobs through the ingress.
+# Replace INGRESS_IP below with your actual ingress address:
+#   minikube ip   or   kubectl get ingress -n jobboard
+# ============================================================
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-database
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: seed-database
+    app.kubernetes.io/component: maintenance
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: seed-database
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-jobs-service
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until wget -qO- http://jobs-service:8000/health | grep -q healthy; do
+                echo "Waiting for jobs-service..."; sleep 3
+              done
+              echo "jobs-service is ready!"
+      containers:
+        - name: seed
+          image: curlimages/curl:8.7.1
+          command:
+            - sh
+            - -c
+            - |
+              BASE="http://jobs-service:8000"
+
+              post_job() {
+                curl -sf -X POST "$BASE/jobs" \
+                  -H "Content-Type: application/json" \
+                  -d "$1" && echo " ✓" || echo " ✗ (may already exist)"
+              }
+
+              echo "=== Seeding job listings ==="
+
+              post_job '{"title":"Senior DevOps Engineer","description":"Design and maintain cloud infrastructure using Kubernetes, Terraform, and CI/CD pipelines to ensure high availability.","company":"TechCorp Ltd.","location":"Remote","salary_range":"$120,000 - $160,000"}'
+
+              post_job '{"title":"Backend Developer (Python)","description":"Build and maintain RESTful APIs using Python and FastAPI. Design PostgreSQL schemas and collaborate with frontend engineers.","company":"StartupXYZ","location":"Tel Aviv, Israel","salary_range":"$90,000 - $120,000"}'
+
+              post_job '{"title":"Cloud Architect","description":"Design cloud-native solutions on AWS and GCP. Lead architecture reviews and drive Infrastructure as Code adoption with Terraform.","company":"CloudSystems Inc.","location":"Hybrid – Berlin, Germany","salary_range":"$140,000 - $180,000"}'
+
+              post_job '{"title":"Frontend Engineer (React)","description":"Build performant web applications using React and TypeScript. Translate UX designs into accessible components.","company":"ProductLab","location":"Remote","salary_range":"$80,000 - $110,000"}'
+
+              post_job '{"title":"Security Engineer (DevSecOps)","description":"Own security posture of the engineering organisation. Integrate SAST/DAST tools into CI/CD and run threat-modelling sessions.","company":"SecureOps","location":"London, UK","salary_range":"$130,000 - $165,000"}'
+
+              echo ""
+              echo "=== Seed complete. Verifying ==="
+              curl -sf "$BASE/jobs" | grep -o '"title"' | wc -l
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

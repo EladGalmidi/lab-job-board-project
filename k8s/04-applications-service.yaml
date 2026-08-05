@@ -1,0 +1,114 @@
+# ============================================================
+# Applications Service (Node.js / Express) – Deployment + Service
+# ============================================================
+
+# ── 1. Deployment ─────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: applications-service
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: applications-service
+    app.kubernetes.io/component: api
+    app.kubernetes.io/language: nodejs
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: applications-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: applications-service
+        app.kubernetes.io/name: applications-service
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres 5432; do
+                echo "Waiting for postgres..."; sleep 2
+              done
+              echo "PostgreSQL is ready."
+      containers:
+        - name: applications-service
+          image: applications-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+              name: http
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: PORT
+              value: "3001"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+
+---
+# ── 2. Service (ClusterIP) ────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: applications-service
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: applications-service
+spec:
+  selector:
+    app: applications-service
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+  type: ClusterIP
