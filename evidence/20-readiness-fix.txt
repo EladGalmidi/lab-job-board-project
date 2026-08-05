@@ -1,0 +1,28 @@
+===== FIX VERIFICATION: health vs readiness split =====
+--- baseline: both endpoints on both services ---
+  jobs-service /health -> {"status":"healthy","service":"jobs-service","version":"1.0.0"}
+  jobs-service /ready  -> {"status":"ready","service":"jobs-service","database":"connected"}
+  applications-service /health -> {"status":"healthy","service":"applications-service","version":"1.0.0"}
+  applications-service /ready  -> {"status":"ready","service":"applications-service","database":"connected"}
+
+--- stop postgres ---
+ Container jobboard-db Stopped 
+--- waiting for healthchecks to re-evaluate (interval 30s) ---
+NAME                   STATUS
+applications-service   Up 3 minutes (unhealthy)
+jobboard-db            Exited (0) About a minute ago
+jobboard-frontend      Up 3 minutes (healthy)
+jobs-service           Up 3 minutes (unhealthy)
+nginx-proxy            Up 3 minutes (unhealthy)
+
+--- BEFORE this fix both API services stayed (healthy) here ---
+
+--- restart postgres, confirm automatic recovery ---
+ Container jobboard-db Started 
+NAME                   STATUS
+applications-service   Up 4 minutes (healthy)
+jobboard-db            Up About a minute (healthy)
+jobboard-frontend      Up 4 minutes (healthy)
+jobs-service           Up 4 minutes (healthy)
+nginx-proxy            Up 4 minutes (healthy)
+GET /api/jobs after recovery -> 200

@@ -2,15 +2,21 @@
 
 Runs with no PostgreSQL server: see conftest.py for the SQLite wiring.
 
-A note on paths. The routes are declared without a trailing slash
-(``@app.get("/jobs")`` in app/main.py), so these tests target ``/jobs``. The
-mismatch between that and the ``/api/jobs/`` the frontend calls is what caused
-the 307-redirect defect documented in SOLUTION.md; ``test_jobs_trailing_slash_redirects``
-below pins that behaviour so a future change to the route declarations cannot
-silently reintroduce it.
+A note on paths. The collection endpoints are declared at BOTH ``/jobs`` and
+``/jobs/`` in app/main.py. Originally only ``/jobs`` existed, so the ``/api/jobs/``
+the frontend calls produced a 307 redirect that escaped the service and returned
+the SPA as text/html -- the defect documented in SOLUTION.md.
+``test_jobs_collection_accepts_trailing_slash`` pins the fix so a future edit to
+the route declarations cannot silently reintroduce it.
 """
 
 import uuid
+from unittest.mock import MagicMock
+
+from sqlalchemy.exc import OperationalError
+
+from app.database import get_db
+from app.main import app
 
 # ── Health ────────────────────────────────────────────────────────────────
 
@@ -25,15 +31,79 @@ def test_health_returns_healthy(client):
 
 
 def test_health_needs_no_database(client):
-    """/health must not touch the database.
+    """/health is the LIVENESS probe and must not touch the database.
 
-    This is deliberately asserted because it is a real weakness: the endpoint
-    answers "healthy" even when PostgreSQL is down, which is why both API
-    services kept reporting healthy while returning 500s in Task 2.3. The test
-    documents the current contract rather than endorsing it.
+    Deliberately shallow: a liveness failure makes the kubelet kill and restart
+    the container, so depending on PostgreSQL here would turn a database blip
+    into a restart storm that removes the capacity needed to recover. The
+    dependency check lives in /ready instead.
     """
     response = client.get("/health")
     assert response.status_code == 200
+
+
+# ── Readiness ─────────────────────────────────────────────────────────────
+
+def test_ready_returns_200_when_database_reachable(client):
+    """/ready is the READINESS probe: it executes a real query."""
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["database"] == "connected"
+
+
+def test_ready_returns_503_when_database_unavailable(client):
+    """/ready must report 503 once the database is unreachable.
+
+    Regression guard for the behaviour measured in Task 2.3: with PostgreSQL
+    stopped, both API services kept reporting healthy while failing every real
+    request, so nothing was ever removed from the load-balancer pool.
+
+    The failure is injected at the session rather than by disposing the engine:
+    an in-memory SQLite engine simply recreates an empty database on the next
+    connection, so disposing it does not actually simulate an outage.
+    """
+    failing_session = MagicMock()
+    failing_session.execute.side_effect = OperationalError(
+        "SELECT 1", {}, Exception("could not connect to server")
+    )
+
+    def failing_db():
+        yield failing_session
+
+    app.dependency_overrides[get_db] = failing_db
+    try:
+        response = client.get("/ready")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 503
+    assert "database unavailable" in response.json()["detail"]
+
+
+def test_health_still_ok_when_database_unavailable(client):
+    """Liveness must stay green during a database outage.
+
+    This is the other half of the split: /ready goes 503 so traffic is withdrawn,
+    but /health stays 200 so the kubelet does not restart an otherwise healthy
+    process. Restarting here would destroy the connection pool and slow recovery.
+    """
+    failing_session = MagicMock()
+    failing_session.execute.side_effect = OperationalError(
+        "SELECT 1", {}, Exception("could not connect to server")
+    )
+
+    def failing_db():
+        yield failing_session
+
+    app.dependency_overrides[get_db] = failing_db
+    try:
+        assert client.get("/ready").status_code == 503
+        assert client.get("/health").status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ── Create ────────────────────────────────────────────────────────────────

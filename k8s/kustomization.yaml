@@ -28,6 +28,11 @@ resources:
 # Uncomment after all services are Running + Ready:
 # - 08-seed-job.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: jobboard
-  app.kubernetes.io/managed-by: kustomize
+# 'commonLabels' is deprecated and, more importantly, it injects labels into
+# SELECTORS as well as metadata -- which silently widened the NetworkPolicy's
+# podSelector. 'labels' with includeSelectors:false adds them to metadata only.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: jobboard
+      app.kubernetes.io/managed-by: kustomize

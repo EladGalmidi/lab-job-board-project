@@ -40,6 +40,8 @@ spec:
                 echo "Waiting for postgres..."; sleep 2
               done
               echo "PostgreSQL is ready."
+      # Ample time for preStop (8s) plus graceful drain before SIGKILL.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: jobs-service
           # For minikube: build locally with eval $(minikube docker-env)
@@ -81,14 +83,30 @@ spec:
               value: postgres
             - name: POSTGRES_PORT
               value: "5432"
+          # Readiness hits /ready, which runs SELECT 1. A pod that cannot reach
+          # PostgreSQL is removed from the Service endpoints instead of silently
+          # continuing to receive traffic it cannot serve.
+          # Hold the container open after SIGTERM so that endpoint removal has time
+          # to propagate to the ingress controller and kube-proxy before the
+          # process starts shutting down. Without this, a terminating pod is
+          # briefly still a valid routing target: a measured rolling update
+          # dropped 2 of 218 requests. maxUnavailable:0 preserves CAPACITY but
+          # does not by itself prevent in-flight requests from failing.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 8"]
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+          # Liveness stays on the shallow /health. It must NOT depend on the
+          # database: a liveness failure restarts the container, so a database
+          # blip would become a cluster-wide restart storm.
           livenessProbe:
             httpGet:
               path: /health

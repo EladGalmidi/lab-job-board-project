@@ -3,6 +3,8 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -27,13 +29,52 @@ app.add_middleware(
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    # APP_VERSION is baked in at build time (see the Dockerfile ARG). It makes a
-    # rolling update observable: probing /health during the rollout shows the
-    # reported version flip while the endpoint keeps answering 200.
+    """Liveness: is this process alive and able to answer at all?
+
+    Deliberately shallow -- it must NOT touch the database. A liveness probe
+    failure causes the kubelet to KILL and restart the container, so making it
+    depend on an external service turns a database blip into a cluster-wide
+    restart storm that removes the very capacity needed to recover.
+
+    Use /ready for the dependency check.
+
+    APP_VERSION is baked in at build time (see the Dockerfile ARG), which makes a
+    rolling update observable: probing this endpoint during a rollout shows the
+    reported version flip while it keeps answering 200.
+    """
     return {
         "status": "healthy",
         "service": "jobs-service",
         "version": os.getenv("APP_VERSION", "1.0.0"),
+    }
+
+
+@app.get("/ready", tags=["Health"])
+def readiness_check(db: Session = Depends(get_db)):
+    """Readiness: can this instance actually serve requests right now?
+
+    Executes a real query, so the answer reflects the database dependency.
+    Returning 503 removes the pod from the Service endpoints without restarting
+    it, which is exactly the desired behaviour while PostgreSQL is unavailable --
+    the pod stops receiving traffic and rejoins automatically once the query
+    succeeds again.
+
+    This exists because the original /health returned a hard-coded "healthy"
+    regardless of database state, so both API services reported healthy while
+    failing 100% of real requests with PostgreSQL down.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"database unavailable: {exc.__class__.__name__}",
+        ) from exc
+
+    return {
+        "status": "ready",
+        "service": "jobs-service",
+        "database": "connected",
     }
 
 

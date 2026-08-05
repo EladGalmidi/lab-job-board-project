@@ -369,9 +369,22 @@ jobs:
             echo "::group::Updating $svc"
             kubectl set image "deployment/$svc" \
               "$svc=${USER}/jobboard-${svc}:${TAG}" -n "$NS"
+
+            # Record WHY this revision exists. Without it every row of
+            # `kubectl rollout history` shows CHANGE-CAUSE <none>, which makes
+            # the history nearly useless when deciding what to roll back to.
+            kubectl annotate "deployment/$svc" -n "$NS" --overwrite \
+              "kubernetes.io/change-cause=${TAG} | ${{ github.event_name }} by ${{ github.actor }} | ${{ github.server_url }}/${{ github.repository }}/commit/${TAG}"
+
             kubectl rollout status "deployment/$svc" -n "$NS" --timeout=180s
             echo "::endgroup::"
           done
+
+          echo "::group::Rollout history"
+          for svc in jobs-service applications-service frontend; do
+            kubectl rollout history "deployment/$svc" -n "$NS"
+          done
+          echo "::endgroup::"
 
       - name: Roll back on failed rollout
         if: failure()

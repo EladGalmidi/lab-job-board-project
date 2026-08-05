@@ -58,8 +58,12 @@ services:
       - jobboard-network
     # 127.0.0.1 rather than localhost, matching the Dockerfile HEALTHCHECK.
     # A healthcheck here overrides the one baked into the image.
+    # Probes /ready (which runs SELECT 1), not the shallow /health. This makes
+    # "healthy" mean "can actually serve requests" -- previously both API
+    # services reported healthy while returning 500s with postgres stopped.
+    # It also makes depends_on: service_healthy meaningful for the frontend.
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -91,8 +95,10 @@ services:
         condition: service_healthy
     networks:
       - jobboard-network
+    # Probes /ready (SELECT 1) rather than the shallow /health -- see the
+    # jobs-service healthcheck above for the rationale.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
