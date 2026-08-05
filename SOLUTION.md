@@ -1091,3 +1091,93 @@ Everything that can be verified locally has been:
 **What remains for the repository owner:** pushing to GitHub with the two Docker Hub secrets
 configured. Until then the pipeline cannot produce a green run or push images, so the
 screenshots for Task 4.2 and the Docker Hub repository listing must be taken after that push.
+
+---
+
+## Summary of changes to the provided project
+
+Part 2 (Kubernetes) is written up separately in [`SOLUTION-k8s.md`](SOLUTION-k8s.md).
+
+### Defects fixed in the delivered code
+
+| # | File | Defect | Impact |
+|---|---|---|---|
+| 1 | `applications-service/`, `frontend/` | No `package-lock.json`, but both Dockerfiles run `npm ci` | Build failed outright |
+| 2 | `frontend/nginx.conf:1` | `eserver {` instead of `server {` | Frontend container crash-looped |
+| 3 | `jobs-service/app/main.py` | Collection routes declared only without a trailing slash | `/api/jobs/` returned the SPA as HTML instead of JSON; UI job list broken |
+| 4 | `nginx/Dockerfile`, `frontend/Dockerfile` | Healthchecks probed `localhost` against an IPv4-only listener | Both nginx images permanently `unhealthy` |
+| 5 | `docker-compose.yml` | `${VAR:-default}` on the DB password | Removing `.env` silently used a weak committed password |
+| 6 | `docker-compose.yml` | No project name | Images built as `lab-job-board-*`, so the lab's Trivy commands did not match |
+| 7 | `k8s/03-*.yaml`, `k8s/04-*.yaml` | `DATABASE_URL` string-built in YAML with no encoding | `applications-service` in `CrashLoopBackOff` with `ERR_INVALID_URL` |
+
+### Errors found in the lab instructions
+
+- `.github/workflows/ci.yml` is listed in the README's structure diagram but **does not exist**;
+  the entire pipeline had to be authored.
+- `http://localhost/api/jobs/docs` cannot work — it rewrites to `/jobs/docs`, not FastAPI's `/docs`.
+- `grep -c "INSERT INTO" backup_*.sql` returns **0**: `pg_dump` emits `COPY` blocks by default.
+- `README-k8s.md` Step 3 generates the password with `openssl rand -base64 20`, whose alphabet
+  (`+ / =`) breaks the YAML-built `DATABASE_URL` — see defect 7.
+- `docker exec nginx-proxy tail -f /var/log/nginx/access.log` hangs: that path is a symlink to
+  `/dev/stdout`.
+
+### Files added
+
+| File | Purpose |
+|---|---|
+| `.github/workflows/ci.yml` | The full 6-stage pipeline + gated `deploy-to-k8s` |
+| `jobs-service/tests/{conftest.py,test_main.py}` | 12 unit tests, no database required |
+| `jobs-service/requirements-dev.txt`, `ruff.toml` | Test and lint tooling |
+| `docker-compose.secrets.yml` | Task 6.1 Docker secrets overlay |
+| `k8s/09-network-policy.yaml`, `k8s/10-configmap.yaml` | K8s Tasks 2.4 and 5.2 |
+| `SOLUTION.md`, `SOLUTION-k8s.md` | These write-ups |
+| `evidence/` | Raw captured output backing every claim above |
+| `backup_*.sql`, `k8s-backup-*.sql` | Task 3.3 and K8s Task 3.3 database dumps |
+
+---
+
+## Submission checklist
+
+Everything verifiable locally has been executed and captured. Two items need you:
+
+- [x] `SOLUTION.md` with all Part 1 answers
+- [x] `SOLUTION-k8s.md` with all Part 2 answers
+- [x] `backup_*.sql` committed (Task 3.3) and restore executed, not just documented
+- [x] Hardened Dockerfiles — all 5 CRITICAL CVEs eliminated
+- [x] `docker-compose.yml` with logging, fail-fast env vars, digest pins
+- [x] 12 unit tests passing with no database
+- [x] CI pipeline authored with all six required stages
+- [ ] **Push to GitHub** and add the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (Task 4.1)
+- [ ] **Screenshots**, which must be captured from a live screen:
+  1. The running application at `http://localhost`
+  2. `docker compose ps` showing all containers healthy
+  3. The successful GitHub Actions pipeline — only possible after the push above
+  4. The Docker Hub repository showing the pushed images — likewise
+  5. `kubectl get all -n jobboard` and `kubectl get pods -n jobboard`
+  6. The app served through the Kubernetes ingress
+
+### Reproducing the verified state
+
+```bash
+# Part 1
+cp .env.example .env          # then set a strong POSTGRES_PASSWORD
+docker compose up --build -d
+docker compose ps             # all five healthy
+curl -s http://localhost/api/jobs/ | python3 -m json.tool
+
+# Tests and lint
+cd jobs-service && pip install -r requirements-dev.txt && ruff check . && pytest tests/ -v
+
+# Part 2
+minikube start --cpus=4 --memory=4096 --driver=docker --addons=ingress,metrics-server
+eval $(minikube docker-env)
+docker build -t jobs-service:latest ./jobs-service
+docker build -t applications-service:latest ./applications-service
+docker build -t frontend:latest ./frontend
+cp k8s/01-secret.yaml.example k8s/01-secret.yaml   # then fill in the password
+kubectl apply -k k8s/
+kubectl apply -f k8s/08-seed-job.yaml
+
+# On Windows/docker driver the minikube IP is not routable from the host:
+kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80
+```

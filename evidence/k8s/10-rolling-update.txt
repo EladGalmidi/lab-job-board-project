@@ -1,0 +1,45 @@
+===== K8s Task 4.2: zero-downtime rolling update =====
+probe requests total : 218
+  HTTP 200           : 216
+  non-200 / failures : 2
+
+--- non-200 responses, if any ---
+83 code=000 ver=1.0.0
+119 code=000 ver=2.0.0
+
+--- the version transition (proof the rollout actually happened) ---
+     81 ver=1.0.0
+      1 ver=2.0.0
+      3 ver=1.0.0
+      6 ver=2.0.0
+      1 ver=1.0.0
+      1 ver=2.0.0
+      1 ver=1.0.0
+      1 ver=2.0.0
+      2 ver=1.0.0
+      4 ver=2.0.0
+      1 ver=1.0.0
+      5 ver=2.0.0
+      1 ver=1.0.0
+      1 ver=2.0.0
+      1 ver=1.0.0
+      1 ver=2.0.0
+      1 ver=1.0.0
+      3 ver=2.0.0
+      1 ver=1.0.0
+      1 ver=2.0.0
+      1 ver=1.0.0
+    100 ver=2.0.0
+
+--- window around the switch ---
+75 code=200 ver=1.0.0
+76 code=200 ver=1.0.0
+77 code=200 ver=1.0.0
+78 code=200 ver=1.0.0
+79 code=200 ver=1.0.0
+80 code=200 ver=1.0.0
+81 code=200 ver=2.0.0
+82 code=200 ver=1.0.0
+83 code=000 ver=1.0.0
+84 code=200 ver=1.0.0
+85 code=200 ver=2.0.0

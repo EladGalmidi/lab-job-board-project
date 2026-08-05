@@ -1,0 +1,84 @@
+===== K8s Task 1.2: describe pod jobs-service-78565db9d6-4p6cx =====
+Name:             jobs-service-78565db9d6-4p6cx
+Namespace:        jobboard
+Priority:         0
+Service Account:  default
+Node:             minikube/192.168.49.2
+Start Time:       Wed, 05 Aug 2026 09:00:54 +0300
+Labels:           app=jobs-service
+                  app.kubernetes.io/managed-by=kustomize
+                  app.kubernetes.io/name=jobs-service
+                  app.kubernetes.io/part-of=jobboard
+                  pod-template-hash=78565db9d6
+Annotations:      kubectl.kubernetes.io/restartedAt: 2026-08-05T09:00:54+03:00
+Status:           Running
+IP:               10.244.0.23
+IPs:
+  IP:           10.244.0.23
+Controlled By:  ReplicaSet/jobs-service-78565db9d6
+Init Containers:
+  wait-for-postgres:
+    Container ID:  docker://46ce02d9cbf870bcd05fa1c831121abcc504465a1d1e0b28a50590dbb4a636f5
+    Image:         busybox:1.36
+    Image ID:      docker-pullable://busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      sh
+      -c
+      until nc -z postgres 5432; do
+        echo "Waiting for postgres..."; sleep 2
+      done
+      echo "PostgreSQL is ready."
+      
+    State:          Terminated
+      Reason:       Completed
+      Exit Code:    0
+      Started:      Wed, 05 Aug 2026 09:00:55 +0300
+      Finished:     Wed, 05 Aug 2026 09:00:55 +0300
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-d64lf (ro)
+Containers:
+  jobs-service:
+    Container ID:   docker://1aff5af0e06ec157210beafb6532f119e2876f9cb6af0ddfc651a25aa7f7490c
+    Image:          jobs-service:latest
+    Image ID:       docker://sha256:e79a787971ff7a692a18f71b627141a088080559aa63291ca6e286e39c4ba47d
+    Port:           8000/TCP (http)
+    Host Port:      0/TCP (http)
+    State:          Running
+      Started:      Wed, 05 Aug 2026 09:00:55 +0300
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     500m
+      memory:  256Mi
+    Requests:
+      cpu:      50m
+      memory:   128Mi
+    Liveness:   http-get http://:8000/health delay=30s timeout=5s period=15s #success=1 #failure=3
+    Readiness:  http-get http://:8000/health delay=10s timeout=5s period=10s #success=1 #failure=3
+    Environment:
+      POSTGRES_USER:      <set to the key 'POSTGRES_USER' in secret 'postgres-secret'>      Optional: false
+      POSTGRES_PASSWORD:  <set to the key 'POSTGRES_PASSWORD' in secret 'postgres-secret'>  Optional: false
+      POSTGRES_DB:        <set to the key 'POSTGRES_DB' in secret 'postgres-secret'>        Optional: false
+      POSTGRES_HOST:      postgres
+      POSTGRES_PORT:      5432
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-d64lf (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-d64lf:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+
+--- init container status ---
+wait-for-postgres: ready=true state={"terminated":{"containerID":"docker://46ce02d9cbf870bcd05fa1c831121abcc504465a1d1e0b28a50590dbb4a636f5","exitCode":0,"finishedAt":"2026-08-05T06:00:55Z","reason":"Completed","startedAt":"2026-08-05T06:00:55Z"}}

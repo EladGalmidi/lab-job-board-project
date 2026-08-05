@@ -22,6 +22,8 @@ resources:
   - 05-frontend.yaml
   - 06-ingress.yaml
   - 07-hpa.yaml
+  - 09-network-policy.yaml
+  - 10-configmap.yaml
 
 # Uncomment after all services are Running + Ready:
 # - 08-seed-job.yaml

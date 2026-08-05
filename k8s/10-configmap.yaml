@@ -1,0 +1,23 @@
+# ============================================================
+# ConfigMap — non-sensitive application configuration (K8s Task 5.2)
+#
+# The split from Secret is by SENSITIVITY, not by data type. Everything here is
+# safe to read: it would be unremarkable in a screenshot, a support ticket or a
+# `kubectl describe`. Credentials stay in postgres-secret.
+#
+# Consumed with envFrom in 03-jobs-service.yaml, which injects every key as an
+# environment variable.
+# ============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jobboard-config
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: jobboard-config
+    app.kubernetes.io/part-of: jobboard
+data:
+  LOG_LEVEL: "info"
+  MAX_JOBS: "100"
+  ALLOWED_ORIGINS: "http://localhost,http://jobboard.local"

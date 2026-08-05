@@ -1,0 +1,48 @@
+===== K8s Task 2.1: trace POST /api/applications/ =====
+NAME                   CLASS   HOSTS   ADDRESS        PORTS   AGE
+applications-ingress   nginx   *       192.168.49.2   80      11m
+frontend-ingress       nginx   *       192.168.49.2   80      11m
+jobs-ingress           nginx   *       192.168.49.2   80      11m
+
+--- the request (through port-forward to the ingress controller) ---
+job_id: 6667d5e1-9f55-4e92-9dc8-663c2b2ce074
+> POST /api/applications/ HTTP/1.1
+> Host: localhost:18080
+> User-Agent: curl/8.18.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 110
+> 
+< HTTP/1.1 201 Created
+< Date: Wed, 05 Aug 2026 06:02:55 GMT
+< Content-Type: application/json; charset=utf-8
+< Content-Length: 233
+< Connection: keep-alive
+< X-Powered-By: Express
+< Access-Control-Allow-Origin: *
+< ETag: W/"e9-Fs6ooSYY4eFnaGgJ/WuMeLXZ7/s"
+< 
+
+--- which pods back the service (label selector -> endpoints) ---
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                   ENDPOINTS                           AGE
+applications-service   10.244.0.18:3001,10.244.0.20:3001   11m
+NAME                                    IP            LABELS
+applications-service-5b5f66b9bd-47lh2   10.244.0.18   applications-service
+applications-service-5b5f66b9bd-mvwx2   10.244.0.20   applications-service
+
+===== K8s Task 2.3: service types =====
+NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+applications-service   ClusterIP   10.104.70.105   <none>        3001/TCP   11m
+frontend               ClusterIP   10.106.44.194   <none>        80/TCP     11m
+jobs-service           ClusterIP   10.101.55.34    <none>        8000/TCP   11m
+postgres               ClusterIP   10.96.121.28    <none>        5432/TCP   11m
+
+--- patch frontend to NodePort ---
+service/frontend patched
+NAME       TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+frontend   NodePort   10.106.44.194   <none>        80:31515/TCP   11m
+--- restore to ClusterIP ---
+service/frontend patched
+NAME       TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+frontend   ClusterIP   10.106.44.194   <none>        80/TCP    11m

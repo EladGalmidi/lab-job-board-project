@@ -1,0 +1,16 @@
+===== K8s Task 2.4: NetworkPolicy =====
+networkpolicy.networking.k8s.io/postgres-network-policy created
+
+NAME                      POD-SELECTOR   AGE
+postgres-network-policy   app=postgres   0s
+
+--- which CNI is in use? ---
+  no policy-capable CNI pod found (minikube default bridge CNI)
+v1.35.1
+
+--- TEST A: unauthorised pod -> postgres:5432 (policy says DENY) ---
+RESULT: CONNECTED (policy NOT enforced)
+
+--- TEST B: jobs-service pod -> postgres:5432 (policy says ALLOW) ---
+Defaulted container "jobs-service" out of: jobs-service, wait-for-postgres (init)
+RESULT: CONNECTED (as intended)

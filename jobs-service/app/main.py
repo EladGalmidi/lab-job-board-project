@@ -1,3 +1,4 @@
+import os
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -26,7 +27,14 @@ app.add_middleware(
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    return {"status": "healthy", "service": "jobs-service", "version": "1.0.0"}
+    # APP_VERSION is baked in at build time (see the Dockerfile ARG). It makes a
+    # rolling update observable: probing /health during the rollout shows the
+    # reported version flip while the endpoint keeps answering 200.
+    return {
+        "status": "healthy",
+        "service": "jobs-service",
+        "version": os.getenv("APP_VERSION", "1.0.0"),
+    }
 
 
 # The collection endpoints are registered at both "/jobs" and "/jobs/".

@@ -1,0 +1,67 @@
+# ============================================================
+# NetworkPolicy — restrict who may reach PostgreSQL (K8s Task 2.4)
+#
+# Default Kubernetes networking is flat: every pod can reach every other pod on
+# every port. The moment ANY NetworkPolicy selects a pod, that pod switches to
+# default-deny for the listed policyTypes, and only traffic matching an explicit
+# rule is allowed. So this single policy both allows the two API services and
+# denies everything else -- there is no separate "deny" rule to write.
+#
+# ENFORCEMENT WARNING: a NetworkPolicy is only an object in etcd unless the CNI
+# plugin implements it. Minikube's default bridge CNI does NOT, so applying this
+# on a default minikube changes nothing observable. See SOLUTION-k8s.md for the
+# measured result. To actually enforce it:
+#     minikube start --cni=calico
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-network-policy
+  namespace: jobboard
+  labels:
+    app.kubernetes.io/name: postgres-network-policy
+spec:
+  # Selects the pods this policy protects: the database.
+  podSelector:
+    matchLabels:
+      app: postgres
+
+  # Only ingress is restricted. Egress is left alone so postgres can still do
+  # DNS lookups and anything else it needs outbound; adding "Egress" here without
+  # a corresponding DNS rule is a classic way to break a cluster.
+  policyTypes:
+    - Ingress
+
+  ingress:
+    # Rule 1 — jobs-service may connect on 5432.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: jobs-service
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Rule 2 — applications-service may connect on 5432.
+    #
+    # Note these are two entries in the "from" list of separate rules rather than
+    # two podSelectors under one "from". Within a single "from" list the entries
+    # are OR-ed, so they could be combined; they are kept apart here for
+    # readability. What must NOT be done is putting podSelector and
+    # namespaceSelector inside the SAME list item, because those are AND-ed --
+    # a common and silent mistake.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: applications-service
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Rule 3 — the seed Job also talks to the database indirectly (through
+    # jobs-service, not directly), so it needs no rule. Deliberately omitted.
+    #
+    # Everything else -- the frontend pods, the ingress controller, any ad-hoc
+    # debug pod such as `kubectl run test-block --image=busybox` -- matches no
+    # rule and is therefore denied.

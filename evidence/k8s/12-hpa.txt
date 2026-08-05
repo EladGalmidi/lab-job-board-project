@@ -1,0 +1,84 @@
+===== K8s Task 4.3: HPA under load =====
+idle baseline: cpu 1-2% of request, memory ~12% of the 128Mi request
+  -> the memory target (75%) is not pinning the HPA, so CPU drives scaling
+
+[t+00m30s] targets=cpu:                                       replicas=<unknown>/75%
+[t+01m00s] targets=cpu:                                       replicas=46%/75%
+[t+01m30s] targets=cpu:                                       replicas=46%/75%
+[t+02m00s] targets=cpu:                                       replicas=46%/75%
+[t+02m30s] targets=cpu:                                       replicas=46%/75%
+[t+03m00s] targets=cpu:                                       replicas=46%/75%
+[t+03m30s] targets=cpu:                                       replicas=46%/75%
+[t+04m00s] targets=cpu:                                       replicas=46%/75%
+[t+04m30s] targets=cpu:                                       replicas=46%/75%
+[t+05m00s] targets=cpu:                                       replicas=46%/75%
+[t+05m30s] targets=cpu:                                       replicas=46%/75%
+[t+06m00s] targets=cpu:                                       replicas=46%/75%
+
+--- pods now ---
+6
+NAME                           CPU(cores)   MEMORY(bytes)   
+jobs-service-5b5bc6b4f-4mkjc   84m          59Mi            
+jobs-service-5b5bc6b4f-8dxh2   84m          59Mi            
+jobs-service-5b5bc6b4f-99qkw   87m          59Mi            
+jobs-service-5b5bc6b4f-pz958   86m          59Mi            
+jobs-service-5b5bc6b4f-pztfr   84m          59Mi            
+jobs-service-5b5bc6b4f-srrcq   85m          61Mi            
+===== K8s Task 4.3: HPA scale event (proof) =====
+NAME               REFERENCE                 TARGETS                          MINPODS   MAXPODS   REPLICAS   AGE
+jobs-service-hpa   Deployment/jobs-service   cpu: 170%/60%, memory: 46%/75%   2         6         6          24m
+
+--- kubectl describe hpa jobs-service-hpa ---
+  resource memory on pods  (as a percentage of request):  46% (61116Ki) / 75%
+Min replicas:                                             2
+Max replicas:                                             6
+Behavior:
+  Scale Up:
+    Stabilization Window: 60 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Pods  Value: 2  Period: 60 seconds
+  Scale Down:
+    Stabilization Window: 300 seconds
+    Select Policy: Max
+    Policies:
+      - Type: Pods  Value: 1  Period: 120 seconds
+Deployment pods:    6 current / 6 desired
+Conditions:
+  Type            Status  Reason            Message
+  ----            ------  ------            -------
+  AbleToScale     True    ReadyForNewScale  recommended size matches current size
+  ScalingActive   True    ValidMetricFound  the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)
+  ScalingLimited  True    TooManyReplicas   the desired replica count is more than the maximum replica count
+Events:
+  Type     Reason                        Age                   From                       Message
+  ----     ------                        ----                  ----                       -------
+  Warning  FailedGetResourceMetric       20m (x7 over 24m)     horizontal-pod-autoscaler  failed to get memory utilization: unable to get metrics for resource memory: no metrics returned from resource metrics API
+  Warning  FailedComputeMetricsReplicas  20m (x7 over 24m)     horizontal-pod-autoscaler  invalid metrics (2 invalid out of 2), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedGetResourceMetric       14m (x8 over 24m)     horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedGetResourceMetric       9m13s (x13 over 23m)  horizontal-pod-autoscaler  failed to get cpu utilization: did not receive metrics for targeted pods (pods might be unready)
+  Normal   SuccessfulRescale             4m28s                 horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization (percentage of request) above target
+  Normal   SuccessfulRescale             3m28s                 horizontal-pod-autoscaler  New size: 6; reason: cpu resource utilization (percentage of request) above target
+
+--- deployment scaling events ---
+21m         Normal    ScalingReplicaSet              deployment/applications-service                    Scaled up replica set applications-service-5b5f66b9bd from 1 to 2
+21m         Normal    ScalingReplicaSet              deployment/jobs-service                            Scaled down replica set jobs-service-56cb877c8f from 1 to 0
+21m         Normal    ScalingReplicaSet              deployment/applications-service                    Scaled down replica set applications-service-5b7f8cdcc4 from 1 to 0
+15m         Normal    ScalingReplicaSet              deployment/jobs-service                            Scaled up replica set jobs-service-78565db9d6 from 0 to 1
+15m         Normal    ScalingReplicaSet              deployment/jobs-service                            Scaled down replica set jobs-service-d7f499846 from 2 to 1
+4m28s       Normal    SuccessfulRescale              horizontalpodautoscaler/jobs-service-hpa           New size: 4; reason: cpu resource utilization (percentage of request) above target
+3m28s       Normal    SuccessfulRescale              horizontalpodautoscaler/jobs-service-hpa           New size: 6; reason: cpu resource utilization (percentage of request) above target
+3m28s       Normal    ScalingReplicaSet              deployment/jobs-service                            (combined from similar events): Scaled up replica set jobs-service-5b5bc6b4f from 4 to 6
+
+--- kubectl top pods under load ---
+NAME                           CPU(cores)   MEMORY(bytes)   
+jobs-service-5b5bc6b4f-4mkjc   84m          59Mi            
+jobs-service-5b5bc6b4f-8dxh2   84m          59Mi            
+jobs-service-5b5bc6b4f-99qkw   87m          59Mi            
+jobs-service-5b5bc6b4f-pz958   86m          59Mi            
+jobs-service-5b5bc6b4f-pztfr   84m          59Mi            
+jobs-service-5b5bc6b4f-srrcq   85m          61Mi            
+
+--- stopping the load generator ---
+stopped. scaleDown.stabilizationWindowSeconds is 300, so replicas stay at 6
+for at least 5 minutes before the controller begins reducing them.

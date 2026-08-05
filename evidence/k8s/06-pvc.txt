@@ -1,0 +1,40 @@
+===== K8s Task 3.1: PVC inspection =====
+Name:          postgres-pvc
+Namespace:     jobboard
+StorageClass:  standard
+Status:        Bound
+Volume:        pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd
+Labels:        app.kubernetes.io/managed-by=kustomize
+               app.kubernetes.io/name=postgres
+               app.kubernetes.io/part-of=jobboard
+Annotations:   pv.kubernetes.io/bind-completed: yes
+               pv.kubernetes.io/bound-by-controller: yes
+               volume.beta.kubernetes.io/storage-provisioner: k8s.io/minikube-hostpath
+               volume.kubernetes.io/storage-provisioner: k8s.io/minikube-hostpath
+Finalizers:    [kubernetes.io/pvc-protection]
+Capacity:      1Gi
+Access Modes:  RWO
+VolumeMode:    Filesystem
+Used By:       postgres-5b8d74874c-p5vcb
+Events:
+  Type    Reason                 Age                From                                                                    Message
+  ----    ------                 ----               ----                                                                    -------
+  Normal  ExternalProvisioning   12m (x2 over 12m)  persistentvolume-controller                                             Waiting for a volume to be created either by the external provisioner 'k8s.io/minikube-hostpath' or manually by the system administrator. If volume creation is delayed, please verify that the provisioner is running and correctly registered.
+  Normal  Provisioning           12m                k8s.io/minikube-hostpath_minikube_a850b187-25d7-4706-b4db-cf310ffdaa55  External provisioner is provisioning volume for claim "jobboard/postgres-pvc"
+  Normal  ProvisioningSucceeded  12m                k8s.io/minikube-hostpath_minikube_a850b187-25d7-4706-b4db-cf310ffdaa55  Successfully provisioned volume pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd
+
+--- the bound PV ---
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                   STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd   1Gi        RWO            Delete           Bound    jobboard/postgres-pvc   standard       <unset>                          12m
+
+--- reclaim policy + access modes for pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd ---
+ReclaimPolicy=Delete
+AccessModes=["ReadWriteOnce"]
+StorageClass=standard
+HostPath=/tmp/hostpath-provisioner/jobboard/postgres-pvc
+
+--- default reclaim policy of the storage class ---
+Delete  provisioner=k8s.io/minikube-hostpath
+
+--- deployment strategy (why Recreate, not RollingUpdate) ---
+Recreate

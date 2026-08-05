@@ -1,0 +1,27 @@
+===== K8s Task 3.2: persistence across pod deletion =====
+--- 1. create a job through the ingress ---
+{
+    "title": "K8s Persistence Test",
+    "description": "This job must survive a pod restart",
+    "company": "Lab Inc",
+    "location": "Kubernetes",
+    "salary_range": null,
+    "id": "7e3d3efc-773f-4d2e-8c20-520a13a66cd4",
+    "created_at": "2026-08-05T06:04:08.937859Z"
+}
+
+count before: 6
+postgres pod before: postgres-5b8d74874c-p5vcb
+
+--- 2. delete the postgres pod ---
+pod "postgres-5b8d74874c-p5vcb" deleted from jobboard namespace
+
+--- 3. wait for the replacement ---
+pod/postgres-5b8d74874c-jrtzf condition met
+postgres pod after:  postgres-5b8d74874c-jrtzf
+  (confirmed: a genuinely different pod)
+
+--- 4. verify the job survived ---
+count after: 6
+K8s Persistence Test present: True
+  id: 7e3d3efc-773f-4d2e-8c20-520a13a66cd4

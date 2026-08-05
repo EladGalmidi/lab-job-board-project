@@ -49,6 +49,12 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          # Inject every key from the ConfigMap as an environment variable.
+          # envFrom is used rather than five individual `env` entries so that
+          # adding a key to the ConfigMap does not require editing this manifest.
+          envFrom:
+            - configMapRef:
+                name: jobboard-config
           env:
             - name: POSTGRES_USER
               valueFrom:

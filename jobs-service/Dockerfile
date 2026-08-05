@@ -35,6 +35,12 @@ FROM python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed3356887313
 LABEL maintainer="DevSecOps Lab"
 LABEL service="jobs-service"
 
+# Build-time version marker, surfaced by GET /health. Used to make the
+# Kubernetes rolling update in K8s Task 4.2 observable:
+#   docker build --build-arg APP_VERSION=2.0.0 -t jobs-service:v2 .
+ARG APP_VERSION=1.0.0
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 # Security updates, the libpq runtime that psycopg2 links against, and the

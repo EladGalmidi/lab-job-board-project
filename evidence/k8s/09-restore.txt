@@ -1,0 +1,37 @@
+===== K8s Task 3.3: RESTORE executed =====
+backup: k8s-backup-20260805_090453.sql   pod: postgres-5b8d74874c-jrtzf
+
+--- 1. create an empty target database inside the pod ---
+NOTICE:  database "restore_test" does not exist, skipping
+CREATE DATABASE
+
+--- 2. confirm it is empty ---
+Did not find any relations.
+
+--- 3. copy the dump into the pod ---
+-rw-rw-rw-    1 root     root          4335 Aug  5 06:05 /tmp/restore.sql
+
+--- 4. restore ---
+CREATE TABLE
+CREATE TABLE
+COPY 1
+COPY 6
+ALTER TABLE
+ALTER TABLE
+CREATE INDEX
+CREATE INDEX
+
+--- 5. verify ---
+ restored_jobs 
+---------------
+             6
+(1 row)
+
+ live_jobs 
+-----------
+         6
+(1 row)
+
+
+--- cleanup ---
+DROP DATABASE

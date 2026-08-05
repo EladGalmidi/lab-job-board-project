@@ -1,0 +1,37 @@
+===== K8s Task 4.1: manual scaling =====
+deployment.apps/jobs-service scaled
+deployment "jobs-service" successfully rolled out
+NAME                            IP            STATUS
+jobs-service-85776b584d-2zw8f   10.244.0.33   Running
+jobs-service-85776b584d-ckp56   10.244.0.31   Running
+jobs-service-85776b584d-ndrcl   10.244.0.32   Running
+jobs-service-85776b584d-t8hhh   10.244.0.30   Running
+
+--- service endpoints now span 4 pods ---
+NAME           ENDPOINTS                                                        AGE
+jobs-service   10.244.0.30:8000,10.244.0.31:8000,10.244.0.32:8000 + 1 more...   16m
+
+--- scale back to 2 ---
+deployment.apps/jobs-service scaled
+deployment "jobs-service" successfully rolled out
+NAME           ENDPOINTS                           AGE
+jobs-service   10.244.0.30:8000,10.244.0.31:8000   16m
+
+===== K8s Task 4.2: rollout history and rollback =====
+deployment.apps/jobs-service 
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+3         <none>
+4         <none>
+5         <none>
+6         <none>
+
+
+--- current image ---
+jobs-service:v2
+--- rollback ---
+deployment.apps/jobs-service rolled back
+deployment "jobs-service" successfully rolled out
+jobs-service:latest
+{"status":"healthy","service":"jobs-service","version":"1.0.0"}
