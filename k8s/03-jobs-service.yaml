@@ -65,8 +65,16 @@ spec:
                 secretKeyRef:
                   name: postgres-secret
                   key: POSTGRES_DB
-            - name: DATABASE_URL
-              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            # DATABASE_URL is deliberately NOT built here. Kubernetes performs
+            # plain textual substitution on $(VAR) with no percent-encoding, so a
+            # password generated as README-k8s.md instructs (openssl rand -base64,
+            # whose alphabet includes + / =) produced a malformed URI and crashed
+            # the container with ERR_INVALID_URL. The service now composes and
+            # encodes the URL itself from these parts.
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_PORT
+              value: "5432"
           readinessProbe:
             httpGet:
               path: /health

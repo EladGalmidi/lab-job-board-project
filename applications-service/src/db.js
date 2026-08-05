@@ -26,7 +26,42 @@ function readSecret(path) {
 }
 
 /**
- * Resolve the connection string, preferring a Docker secret when configured.
+ * Assemble a connection URL from discrete parts, encoding the credentials.
+ *
+ * Percent-encoding is the whole point of this helper. A password containing
+ * @ : / ? or # corrupts the URI when interpolated naively, and neither a Docker
+ * secret nor a Kubernetes secret lets us constrain which characters it holds.
+ */
+function composeUrl(password) {
+  const user = process.env.POSTGRES_USER || 'postgres';
+  const database = process.env.POSTGRES_DB || 'jobboard';
+  const host = process.env.POSTGRES_HOST || 'postgres';
+  const port = process.env.POSTGRES_PORT || '5432';
+  return (
+    `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}` +
+    `@${host}:${port}/${database}`
+  );
+}
+
+/**
+ * Resolve the connection string from whichever configuration style is present.
+ *
+ * Three modes, in precedence order:
+ *   1. DB_PASSWORD_FILE  -> read the password from that path (Docker secret, or
+ *      a Kubernetes secret mounted as a volume) and compose the URL.
+ *   2. DATABASE_URL      -> use it verbatim (the default Compose stack).
+ *   3. POSTGRES_PASSWORD -> compose the URL from the discrete POSTGRES_* vars.
+ *
+ * Mode 3 exists because building the URL in YAML is unsafe.
+ * k8s/04-applications-service.yaml originally did this:
+ *
+ *   value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+ *
+ * Kubernetes performs plain textual substitution with no encoding, so a password
+ * generated the way k8s/README-k8s.md instructs -- `openssl rand -base64 20`,
+ * whose alphabet includes '+', '/' and '=' -- produces a malformed URI and this
+ * container died with ERR_INVALID_URL. Letting the application compose the URL
+ * keeps the encoding responsibility in the one place that can do it correctly.
  *
  * There is deliberately no hard-coded fallback. The original module defaulted to
  * 'postgresql://postgres:jobboard123@localhost:5432/jobboard', which masked a
@@ -34,30 +69,22 @@ function readSecret(path) {
  */
 function buildConnectionString() {
   const passwordFile = process.env.DB_PASSWORD_FILE;
-
   if (passwordFile) {
-    const password = readSecret(passwordFile);
-    const user = process.env.POSTGRES_USER || 'postgres';
-    const database = process.env.POSTGRES_DB || 'jobboard';
-    const host = process.env.POSTGRES_HOST || 'postgres';
-    const port = process.env.POSTGRES_PORT || '5432';
-    // Percent-encode the credentials: a password containing @ : / or # would
-    // otherwise corrupt the URI, and the point of a secret is that we do not get
-    // to constrain which characters it contains.
-    return (
-      `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}` +
-      `@${host}:${port}/${database}`
-    );
+    return composeUrl(readSecret(passwordFile));
   }
 
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error(
-      'No database configuration: set DATABASE_URL, or set DB_PASSWORD_FILE to ' +
-        'the path of a mounted Docker secret.'
-    );
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
   }
-  return url;
+
+  if (process.env.POSTGRES_PASSWORD) {
+    return composeUrl(process.env.POSTGRES_PASSWORD);
+  }
+
+  throw new Error(
+    'No database configuration: set DB_PASSWORD_FILE, DATABASE_URL, or ' +
+      'POSTGRES_PASSWORD (with the accompanying POSTGRES_* variables).'
+  );
 }
 
 const pool = new Pool({

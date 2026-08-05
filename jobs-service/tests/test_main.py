@@ -119,15 +119,24 @@ def test_list_jobs_returns_created_jobs(client, valid_job_payload):
 
 # ── Routing contract ──────────────────────────────────────────────────────
 
-def test_jobs_trailing_slash_redirects(client):
-    """/jobs/ is a 307 redirect to /jobs, not a route of its own.
+def test_jobs_collection_accepts_trailing_slash(client):
+    """Both /jobs and /jobs/ serve the collection directly, with no redirect.
 
-    Regression guard for the defect described in SOLUTION.md: nginx used to
-    rewrite /api/jobs/ to /jobs/, and this redirect sent the browser to a path
-    that fell through to the SPA. The proxy now normalises the trailing slash,
-    but this pins the underlying FastAPI behaviour it has to compensate for.
+    Regression guard for the defect described in SOLUTION.md. Only "/jobs" was
+    declared originally, so "/jobs/" produced a 307 whose Location pointed at the
+    public host; the browser then re-requested a path that no proxy mapped back
+    to this service and received the SPA as text/html. Asserting
+    follow_redirects=False is the point of the test: a 307 here is the bug.
     """
-    response = client.get("/jobs/", follow_redirects=False)
+    for path in ("/jobs", "/jobs/"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        assert response.json() == []
 
-    assert response.status_code == 307
-    assert response.headers["location"].endswith("/jobs")
+
+def test_jobs_collection_accepts_trailing_slash_on_post(client, valid_job_payload):
+    """POST works on both forms too, since the frontend posts to /api/jobs/."""
+    response = client.post("/jobs/", json=valid_job_payload, follow_redirects=False)
+
+    assert response.status_code == 201
+    assert response.json()["title"] == valid_job_payload["title"]
