@@ -1,0 +1,15 @@
+===== Task 6.2: CSP header verification =====
+$ curl -sI http://localhost | grep -i content-security
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+
+--- all security headers on the frontend route ---
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 1; mode=block
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+
+--- app still works with CSP enforced ---
+GET /          -> 200
+GET /api/jobs/ -> 200

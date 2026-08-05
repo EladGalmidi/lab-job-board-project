@@ -1,0 +1,32 @@
+===== Task 5.3: trace POST /api/applications/ =====
+using existing job_id: job-001
+
+--- request as the browser sends it ---
+* Host localhost:80 was resolved.
+> POST /api/applications/ HTTP/1.1
+> Host: localhost
+> User-Agent: curl/8.18.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 115
+> 
+< HTTP/1.1 201 Created
+< Server: nginx/1.27.5
+< Date: Wed, 05 Aug 2026 05:21:08 GMT
+< Content-Type: application/json; charset=utf-8
+< Content-Length: 218
+< Connection: keep-alive
+< X-Powered-By: Express
+< Access-Control-Allow-Origin: *
+< ETag: W/"da-GvnqlIp1wAnds9MLpw6bxu/CBn0"
+< X-Frame-Options: SAMEORIGIN
+< X-Content-Type-Options: nosniff
+< X-XSS-Protection: 1; mode=block
+< 
+
+--- what the upstream actually received (applications-service access log) ---
+applications-service  | [GET /applications] getaddrinfo ENOTFOUND postgres
+applications-service  | [db] Applications table ready
+applications-service  | [applications-service] listening on port 3001
+
+--- nginx access log entry for that request ---

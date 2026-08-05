@@ -792,3 +792,154 @@ $ docker exec jobboard-db psql -U postgres -d jobboard -c "SELECT applicant_name
 > In the official nginx image that file is a symlink to `/dev/stdout`
 > (`access.log -> /dev/stdout`), so reading it blocks. Use `docker compose logs nginx`, which
 > is also what makes the `json-file` log rotation from Task 2.1 apply to nginx's access log.
+
+---
+
+## Task 6 — Security Hardening (Bonus — 10 pts)
+
+### 6.1 Use Docker secrets (5 pts)
+
+Implemented as an **overlay** (`docker-compose.secrets.yml`) rather than by editing the base
+file, so the stack Tasks 1–5 are graded against stays intact:
+
+```bash
+echo "S3cr3t-Doc.k3r~Pa55w0rd!x" > db_password.txt        # gitignored
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+**A Compose merge subtlety worth recording.** The obvious way to drop the inherited
+`POSTGRES_PASSWORD` is `POSTGRES_PASSWORD: null` in the override — but Compose *keeps the base
+value*, and the container then fails:
+
+```
+jobboard-db  | error: both POSTGRES_PASSWORD and POSTGRES_PASSWORD_FILE are set (but are exclusive)
+```
+
+Removing an inherited key requires the `!reset` tag (Compose ≥ 2.24):
+
+```yaml
+POSTGRES_PASSWORD: !reset null
+DATABASE_URL:      !reset null
+```
+
+Verified in the merged config — neither `POSTGRES_PASSWORD` nor `DATABASE_URL` survives, only
+the `_FILE` pointers.
+
+**Application changes.** Both services now read the password from disk and assemble the
+connection string themselves:
+
+- `jobs-service/app/database.py` → `build_database_url()`
+- `applications-service/src/db.js` → `buildConnectionString()`
+
+Both follow the same rules:
+
+1. If `DB_PASSWORD_FILE` is set, read that file and build the URL from the surrounding
+   `POSTGRES_*` variables; otherwise fall back to `DATABASE_URL`. The service therefore works
+   unchanged in both the base and the secrets stack, and in Kubernetes, because it only ever
+   depends on *a file path*.
+2. **Credentials are percent-encoded** (`urllib.parse.quote` / `encodeURIComponent`). This is
+   not cosmetic: Task 2.2 had to hand-pick a password avoiding `@ : / #` because those are URI
+   delimiters. The whole point of a secret is that its contents are not under our control, so
+   the code must encode rather than assume.
+3. **The hard-coded fallback was deleted.** Both modules previously defaulted to
+   `postgresql://postgres:jobboard123@localhost:5432/jobboard` — a real password in source
+   control that also silently masked misconfiguration. A missing configuration now raises
+   immediately.
+
+**Verification** (`evidence/13-secrets.txt`) — all five containers healthy, full read and
+write path exercised:
+
+```
+GET /api/jobs/ -> 200 ; jobs seeded: 5
+write path via secret OK, application id: 075b2f02-20c0-4e80-81d3-071e55e127a2
+```
+
+The password is genuinely gone from the process environment:
+
+```
+jobboard-db:          no PASSWORD= or DATABASE_URL= in env (only *_FILE pointers)
+jobs-service:         no PASSWORD= or DATABASE_URL= in env (only *_FILE pointers)
+applications-service: no PASSWORD= or DATABASE_URL= in env (only *_FILE pointers)
+
+$ docker exec jobs-service env | grep -E "DB_PASSWORD_FILE|POSTGRES_"
+DB_PASSWORD_FILE=/run/secrets/db_password
+POSTGRES_DB=jobboard
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+
+$ docker inspect jobs-service | grep -c "S3cr3t-Doc.k3r"
+0
+```
+
+That last line is the point of the exercise. With `.env` alone the password is in
+`POSTGRES_PASSWORD`, and anyone able to run `docker inspect` — or read `/proc/<pid>/environ`
+from a process sharing the namespace — can recover it. Environment variables are also
+inherited by every child process and are routinely captured verbatim by crash reporters and
+log shippers. A file read once at startup has none of those exposure paths.
+
+**An honest limitation of file secrets under Compose.** Compose is not Swarm, and the
+implementation differs:
+
+```
+$ docker inspect jobs-service --format '{{range .Mounts}}...'
+bind  C:\Users\EladGal\projects\lab-job-board\db_password.txt -> /run/secrets/db_password  rw=false
+
+$ docker exec jobs-service ls -l /run/secrets/
+-rwxrwxrwx  1 root root 25 Aug  5 05:29 db_password
+```
+
+It is a **read-only bind mount of a plaintext file on the host**, not a tmpfs-delivered
+secret. So this improves *exposure* (out of the environment, out of `docker inspect`) but not
+*at-rest secrecy* — the password still sits unencrypted on the developer's disk, and Compose
+does not tighten the file mode the way Swarm does (Swarm mounts secrets in tmpfs at `0444` and
+they never touch the node's disk). The permissive `0777` above comes from the Windows 9p/drvfs
+translation layer rather than from Docker. For real deployments the same code works unchanged
+against Swarm secrets, Kubernetes secrets mounted as volumes (see `SOLUTION-k8s.md`), or a
+Vault agent sidecar — because the contract is only ever "read this path".
+
+### 6.2 Content Security Policy headers (5 pts)
+
+Added at the `server` level in `nginx/nginx.conf` so it covers every route:
+
+```nginx
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" always;
+```
+
+Against the three required rules:
+
+| Requirement | Directive | Notes |
+|---|---|---|
+| Scripts only from `self` | `script-src 'self'` | No inline `<script>`, no `eval`, no CDNs. Vite emits external bundles, so no relaxation was needed. |
+| Styles from `self` and inline | `style-src 'self' 'unsafe-inline'` | `'unsafe-inline'` is required because React writes element `style` attributes at runtime. |
+| Block all `frame-ancestors` | `frame-ancestors 'none'` | No origin may frame the app. |
+
+Additional directives beyond the requirement: `default-src 'self'` as a backstop for anything
+not named, `img-src 'self' data:` because the build inlines small images as data URIs,
+`connect-src 'self'` to confine XHR/fetch to the `/api` routes, `object-src 'none'` to remove
+the legacy plugin surface, `base-uri 'self'` so an injected `<base>` cannot re-target relative
+URLs, and `form-action 'self'` so forms cannot post cross-origin.
+
+`'unsafe-inline'` on `style-src` is the one deliberate weakening and should be called out
+rather than glossed over: it permits injected inline styles, which enables CSS-based data
+exfiltration and UI-redressing attacks. Removing it needs nonce- or hash-based styles, which
+cannot be expressed in a static header and would require build integration.
+
+`frame-ancestors 'none'` supersedes the pre-existing `X-Frame-Options: SAMEORIGIN`. Both are
+sent; where they disagree, modern browsers honour the CSP directive, so the effective policy
+is the stricter `'none'`.
+
+**Verification** (`evidence/12-csp.txt`):
+
+```
+$ curl -sI http://localhost | grep -i content-security
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+```
+
+The policy was also confirmed not to break the app: the page loads with **6 open positions
+rendered and zero console messages**, so nothing is being blocked in practice.
+
+> Minor observation: `X-Frame-Options` and `X-Content-Type-Options` are each returned twice,
+> because both the proxy (`nginx/nginx.conf`) and the frontend's own server block
+> (`frontend/nginx.conf`) add them. Duplicated identical values are harmless, but the tidier
+> arrangement is to set security headers only at the edge proxy.
