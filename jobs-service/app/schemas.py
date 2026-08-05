@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
-from typing import Optional
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 class JobCreate(BaseModel):
@@ -8,7 +8,7 @@ class JobCreate(BaseModel):
     description:  str           = Field(..., min_length=10)
     company:      str           = Field(..., min_length=2,  max_length=200)
     location:     str           = Field(..., min_length=2,  max_length=200)
-    salary_range: Optional[str] = Field(None, max_length=100)
+    salary_range: str | None = Field(None, max_length=100)
 
 
 class Job(JobCreate):

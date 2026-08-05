@@ -2,7 +2,7 @@ import os
 from urllib.parse import quote
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
 def _read_secret(path: str) -> str:

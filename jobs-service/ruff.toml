@@ -1,0 +1,28 @@
+# Ruff configuration for the lint-test-python CI job.
+line-length = 100
+target-version = "py312"
+
+[lint]
+# pycodestyle, pyflakes, isort, pep8-naming, pyupgrade, flake8-bugbear.
+select = ["E", "F", "I", "N", "UP", "B"]
+
+[lint.flake8-bugbear]
+# B008 forbids function calls in argument defaults, but `db: Session = Depends(get_db)`
+# is the documented FastAPI dependency-injection idiom -- FastAPI inspects the
+# default to build the dependency graph, so it cannot be moved into the body.
+# Treating these as immutable calls suppresses the false positives without
+# disabling B008 for genuine cases such as `def f(x=[])`.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+]
+
+[lint.per-file-ignores]
+# conftest.py must set DATABASE_URL before importing the application, so its
+# imports legitimately cannot all sit at the top of the file.
+"tests/conftest.py" = ["E402"]
+# sessionmaker returns a class, so PascalCase is the conventional name for it.
+"tests/*" = ["N806"]

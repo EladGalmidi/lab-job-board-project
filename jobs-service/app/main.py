@@ -1,7 +1,6 @@
 import uuid
-from typing import List
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -30,7 +29,7 @@ def health_check():
     return {"status": "healthy", "service": "jobs-service", "version": "1.0.0"}
 
 
-@app.get("/jobs", response_model=List[schemas.Job], tags=["Jobs"])
+@app.get("/jobs", response_model=list[schemas.Job], tags=["Jobs"])
 def list_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(models.Job).offset(skip).limit(limit).all()
 
