@@ -4,6 +4,37 @@ All command output in this document was captured from a live run on Docker Engin
 (Docker Desktop, 12 CPU / 8.2 GB) with Trivy 0.72.0. Raw scan reports are committed under
 [`evidence/`](evidence/).
 
+Part 2 (Kubernetes) is written up in [`SOLUTION-k8s.md`](SOLUTION-k8s.md).
+
+---
+
+## Remediation pass — issues found, then fixed
+
+An initial pass through the lab produced a set of honest findings that were *documented* rather
+than corrected. A second pass fixed them, because a documented-but-unfixed defect in a security
+or reliability control is worse than none: it manufactures false confidence. Each is marked
+**✅ FIXED** at the relevant section, with a re-measurement.
+
+| # | Issue | Where | Status |
+|---|---|---|---|
+| 1 | Missing `package-lock.json` — build failed outright | both Node services | ✅ fixed |
+| 2 | `eserver` typo crash-looped the frontend | `frontend/nginx.conf` | ✅ fixed |
+| 3 | `/api/jobs/` returned the SPA as `text/html` instead of JSON | FastAPI routes + both proxies | ✅ fixed |
+| 4 | nginx healthchecks probed `localhost` on an IPv4-only listener | two Dockerfiles | ✅ fixed |
+| 5 | `/health` reported healthy with the database down | both services | ✅ fixed — Task 2.3 |
+| 6 | Security headers emitted twice | `frontend/nginx.conf` | ✅ fixed — Task 6.2 |
+| 7 | Rolling update dropped 2/218 requests | k8s deployments | ✅ fixed — K8s Task 4.2 |
+| 8 | NetworkPolicy accepted but **not enforced** | minikube CNI | ✅ fixed — K8s Task 2.4 |
+| 9 | Secret password stored twice in etcd via `kubectl apply` | k8s Secret | ✅ fixed — K8s Task 5.1 |
+| 10 | `CHANGE-CAUSE` empty on every revision | CI rollout | ✅ fixed — K8s Task 4.2 |
+| 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — K8s pre-work |
+
+One item is **deliberately not fixed**: the README's `http://localhost/api/jobs/docs` URL.
+It is a documentation error rather than a code defect, and making that exact path serve Swagger
+would require coordinated `root_path`/`openapi_url` changes across both the Compose proxy and
+the Kubernetes ingress for no functional gain. The working way to reach the API docs is
+documented in the pre-work section below.
+
 ---
 
 ## Pre-work: four defects that stopped the lab from running
@@ -424,15 +455,38 @@ Three observations, the second of which is the important one:
    containers are entirely unaffected by the database disappearing — Compose neither stops
    nor restarts them.
 
-2. **The healthchecks are misleading.** Both API services kept reporting `healthy` while
-   failing 100% of real requests, because `/health` returns a hard-coded
-   `{"status": "healthy"}` without ever touching the database. In production this is
-   actively dangerous: an orchestrator would keep routing traffic to a service that cannot
+2. **The healthchecks were misleading — since fixed, see below.** Both API services kept
+   reporting `healthy` while failing 100% of real requests, because `/health` returned a
+   hard-coded `{"status": "healthy"}` without ever touching the database. In production this
+   is actively dangerous: an orchestrator would keep routing traffic to a service that cannot
    serve any of it, and would never restart it or pull it from the load-balancer pool. The
-   correct split is to keep the *liveness* probe shallow (is the process wedged?) but have
-   the *readiness* probe execute something like `SELECT 1`, so that dependency failure
-   actually removes the pod from rotation. The same flaw is inherited by the Kubernetes
-   manifests, where `readinessProbe` and `livenessProbe` both point at this same `/health`.
+   same flaw was inherited by the Kubernetes manifests, where `readinessProbe` and
+   `livenessProbe` both pointed at this same `/health`.
+
+   **✅ FIXED — liveness and readiness are now separate endpoints.** Both services gained a
+   `/ready` endpoint that executes `SELECT 1`; `/health` stays deliberately shallow. Compose
+   healthchecks and the Kubernetes `readinessProbe` now target `/ready`, while `livenessProbe`
+   stays on `/health`. That split is the point: a *readiness* failure withdraws the pod from
+   the Service endpoints without killing it, whereas a *liveness* failure restarts the
+   container — so making liveness depend on PostgreSQL would turn a database blip into a
+   restart storm that destroys the connection pools needed to recover.
+
+   Re-measured with postgres stopped (`evidence/20-readiness-fix.txt`):
+
+   ```
+   NAME                   STATUS
+   applications-service   Up (unhealthy)     <-- was (healthy) before the fix
+   jobboard-db            Exited (0)
+   jobs-service           Up (unhealthy)     <-- was (healthy) before the fix
+   nginx-proxy            Up (unhealthy)
+   jobboard-frontend      Up (healthy)       <-- correct: static assets are unaffected
+
+   after "docker compose start postgres":
+   all five healthy again; GET /api/jobs -> 200
+   ```
+
+   Two unit tests pin the behaviour: `test_ready_returns_503_when_database_unavailable` and
+   `test_health_still_ok_when_database_unavailable`.
 
 3. **Recovery is automatic.** After `docker compose start postgres`, `GET /api/jobs` returned
    `200` again with no restart of the API services, because SQLAlchemy is configured with
@@ -939,10 +993,14 @@ Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'
 The policy was also confirmed not to break the app: the page loads with **6 open positions
 rendered and zero console messages**, so nothing is being blocked in practice.
 
-> Minor observation: `X-Frame-Options` and `X-Content-Type-Options` are each returned twice,
-> because both the proxy (`nginx/nginx.conf`) and the frontend's own server block
-> (`frontend/nginx.conf`) add them. Duplicated identical values are harmless, but the tidier
-> arrangement is to set security headers only at the edge proxy.
+> Minor observation, since fixed: `X-Frame-Options` and `X-Content-Type-Options` were each
+> returned twice, because both the proxy (`nginx/nginx.conf`) and the frontend's own server
+> block (`frontend/nginx.conf`) added them. Duplicated identical values are harmless in
+> themselves, but a duplicated header whose values ever *diverge* is genuinely ambiguous, and
+> having two places to edit a security policy is how they drift.
+>
+> **✅ FIXED** — the `add_header` directives were removed from `frontend/nginx.conf`, so
+> security headers are now set in exactly one place, at the edge proxy.
 
 ---
 

@@ -1,0 +1,42 @@
+===== FIX VERIFICATION: zero-downtime rolling update =====
+Fix: preStop (sleep 8) + terminationGracePeriodSeconds: 30 + SIGTERM handling
+
+Measurement method matters. A first attempt probed through
+'kubectl port-forward service/jobs-service', which reported 25/85 failures --
+but that is an artifact: port-forward pins to ONE backing pod, so the forward
+breaks when that pod is replaced (it also never observed v2 at all: v2=0).
+The probe below runs INSIDE the cluster against the Service, so it sees the
+same load balancing real clients do.
+
+--- probe: 400 sequential requests to http://jobs-service:8000/health ---
+--- rollout to jobs-service:v2 triggered mid-run ---
+
+RESULT ok=400 fail=0 v1=199 v2=201
+
+  0 failed requests out of 400.
+  The near-even v1/v2 split proves the probe genuinely spanned the rollout
+  and observed the version flip, rather than finishing before it began.
+
+--- rollout history: CHANGE-CAUSE is now populated ---
+deployment.apps/jobs-service 
+REVISION  CHANGE-CAUSE
+3         jobs-service:v2 | manual rollout to verify zero-downtime fix
+4         jobs-service:v2 | zero-downtime verification after preStop fix
+
+
+--- deployment strategy in effect ---
+{
+    "rollingUpdate": {
+        "maxSurge": 1,
+        "maxUnavailable": 0
+    },
+    "type": "RollingUpdate"
+}
+
+--- graceful-shutdown settings in effect ---
+  terminationGracePeriodSeconds=30
+  preStop=["sh","-c","sleep 8"]
+
+--- probes: liveness shallow, readiness DB-backed ---
+  livenessProbe=/health
+  readinessProbe=/ready

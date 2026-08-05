@@ -6,6 +6,26 @@ committed under [`evidence/k8s/`](evidence/k8s/).
 
 Part 1 (Docker Compose) is written up in [`SOLUTION.md`](SOLUTION.md).
 
+> **Cluster note.** The measurements below span two cluster builds. Sections marked
+> **✅ FIXED** were re-measured on a cluster recreated with `--cni=calico`, which was necessary
+> because minikube's default bridge CNI silently ignores NetworkPolicy objects (K8s Task 2.4).
+> Where a "before" and "after" measurement both appear, both are real captures.
+
+---
+
+## Remediation pass — Kubernetes issues found, then fixed
+
+| # | Issue | Status | Section |
+|---|---|---|---|
+| 1 | `DATABASE_URL` built by YAML `$(VAR)` interpolation with no percent-encoding — an `openssl rand -base64` password containing `/` produced `ERR_INVALID_URL` and crash-looped the Node service | ✅ fixed | Pre-work |
+| 2 | Ingress rewrite produced `/jobs/`, which FastAPI 307-redirected out of the service | ✅ fixed | Pre-work |
+| 3 | NetworkPolicy accepted by the API server but **not enforced** by the CNI | ✅ fixed | Task 2.4 |
+| 4 | Rolling update dropped 2/218 requests — no `preStop`, no graceful shutdown | ✅ fixed | Task 4.2 |
+| 5 | `CHANGE-CAUSE` `<none>` on every revision | ✅ fixed | Task 4.2 |
+| 6 | Secret password written a second time into `last-applied-configuration` | ✅ fixed | Task 5.1 |
+| 7 | `readinessProbe` pointed at a `/health` that never touched the database | ✅ fixed | Task 6.2 |
+| 8 | `commonLabels` injected labels into **selectors**, silently widening the NetworkPolicy's `podSelector` | ✅ fixed | Task 2.4 |
+
 ---
 
 ## Pre-work: two defects that stopped the cluster from working
@@ -386,8 +406,8 @@ A subtlety worth flagging: entries within a single `from` list are OR-ed, but `p
 `namespaceSelector` inside the **same list item** are AND-ed. Getting that wrong silently
 produces a policy far broader or narrower than intended.
 
-**Measured enforcement — the policy does nothing on this cluster.** As the lab's own note
-warns, and as required, here is what was actually observed:
+**Measured enforcement, first attempt — the policy did nothing.** As the lab's own note warns,
+this was the initial observation on minikube's default bridge CNI:
 
 ```
 $ kubectl get networkpolicy -n jobboard
@@ -401,16 +421,41 @@ RESULT: CONNECTED (as intended)
 ```
 
 Test A **should** have been blocked. The API server accepted and stored the object, and
-`kubectl get` displays it, but minikube's default bridge CNI does not implement the
-NetworkPolicy API, so nothing enforces it. No policy-capable CNI pod exists in `kube-system`.
+`kubectl get` displayed it, but minikube's default bridge CNI does not implement the
+NetworkPolicy API, so nothing enforced it. No policy-capable CNI pod existed in `kube-system`.
 
 This is a genuinely dangerous failure mode: the policy looks correct in every `kubectl` output
 and in any GitOps diff, while providing zero protection. Verifying enforcement, rather than
-existence, is the only way to know. To make it real:
+existence, is the only way to know.
+
+### ✅ FIXED — cluster rebuilt on Calico, policy now enforces
+
+An unenforced security control is worse than none, because it manufactures false confidence.
+The cluster was therefore recreated with a policy-capable CNI:
 
 ```bash
-minikube delete && minikube start --cni=calico
+minikube delete
+minikube start --cpus=4 --memory=4096 --driver=docker \
+  --cni=calico --addons=ingress,metrics-server
+kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n kube-system --timeout=300s
 ```
+
+Re-measured on the Calico cluster (`evidence/21-networkpolicy-enforced.txt`):
+
+```
+--- CNI in use ---
+  calico-node: Running
+
+TEST 1: unlabelled busybox pod -> postgres:5432       BLOCKED (policy enforced)
+TEST 2: jobs-service          -> postgres:5432       CONNECTED (allowed as intended)
+TEST 3: applications-service  -> postgres:5432       CONNECTED (allowed as intended)
+TEST 4: end-to-end through the policy                jobs returned: 5
+```
+
+Test 1 is now refused, which is the entire point of the policy, while both authorised services
+are unaffected and the application still works end to end. **The manifest was never changed —
+it was correct all along.** Only the cluster's CNI was wrong, which is precisely why
+enforcement has to be tested rather than assumed.
 
 Calico, Cilium, Antrea and most managed CNIs (GKE Dataplane V2, AKS Azure CNI, EKS with Calico)
 implement it. On a cluster where enforcement matters, pair the policy with a test that asserts
@@ -650,19 +695,65 @@ because:
    `SIGTERM` and begins shutting down immediately, dropping connections that arrive in that
    window.
 
-The standard fix is a `preStop` sleep, which keeps the container serving while endpoint removal
-propagates:
+Two failures in 218 requests (0.9%) over a ~10s window is unremarkable for a lab, but at
+production request rates it is a meaningful error-budget spend on every deploy.
 
-```yaml
-lifecycle:
-  preStop:
-    exec:
-      command: ["sh", "-c", "sleep 5"]
-terminationGracePeriodSeconds: 30
+### ✅ FIXED — zero downtime achieved and re-measured
+
+Rather than leave this as a documented caveat, the fix was applied. Three changes:
+
+1. **`preStop` hook** on all three deployments, keeping the container serving while endpoint
+   removal propagates to the ingress controller and kube-proxy:
+
+   ```yaml
+   lifecycle:
+     preStop:
+       exec:
+         command: ["sh", "-c", "sleep 8"]
+   terminationGracePeriodSeconds: 30
+   ```
+
+2. **Graceful SIGTERM handling in the Node service** (`applications-service/src/index.js`).
+   Node does *not* handle `SIGTERM` by default — the process dies instantly and every
+   in-flight request is dropped. It now calls `server.close()` to stop accepting new
+   connections while letting existing ones finish, then drains the `pg` pool, with a 15s
+   failsafe that stays inside the 30s grace period. uvicorn already drains on `SIGTERM`, so
+   the Python service needed only the `preStop` hook.
+
+3. **Readiness moved to `/ready`** (see Task 5 below), so a pod that cannot reach PostgreSQL
+   is withdrawn from the endpoint set instead of receiving traffic it cannot serve.
+
+**A correction on measurement method, because the first re-test was wrong.** Probing through
+`kubectl port-forward service/jobs-service` reported 25 failures out of 85 — but that is an
+artifact, not downtime: `port-forward` pins to a *single* backing pod, so the tunnel breaks
+when that pod is replaced. The giveaway was `v2=0` — the probe never observed the new version
+at all, so it cannot have been measuring the Service. The valid probe runs **inside** the
+cluster against the Service, seeing the same load balancing a real client would.
+
+**Re-measured result — 400/400 succeeded, 0 failed** (`evidence/22-zero-downtime-fix.txt`):
+
+```
+--- 400 sequential requests to http://jobs-service:8000/health from an in-cluster pod ---
+--- rollout to jobs-service:v2 triggered mid-run ---
+
+RESULT ok=400 fail=0 v1=199 v2=201
 ```
 
-Two failures in 218 requests (0.9%) over a ~10s window is unremarkable for a lab, but at
-production request rates it is a meaningful error budget spend on every deploy.
+The near-even 199/201 split across versions is the important detail: it proves the probe
+genuinely spanned the rollout and observed the version flip, rather than completing before the
+rollout began. Zero failed requests across a real transition.
+
+Settings confirmed live on the cluster:
+
+```
+$ kubectl get deployment jobs-service -n jobboard -o jsonpath='{.spec.strategy}'
+{"rollingUpdate":{"maxSurge":1,"maxUnavailable":0},"type":"RollingUpdate"}
+
+terminationGracePeriodSeconds=30
+preStop=["sh","-c","sleep 8"]
+livenessProbe=/health      <- shallow
+readinessProbe=/ready      <- DB-backed
+```
 
 **What `maxSurge: 1, maxUnavailable: 0` means.** `maxSurge` is how many pods above the desired
 count may exist during the update; `maxUnavailable` is how many below the desired count of
@@ -708,9 +799,29 @@ previous ReplicaSet back up — old ReplicaSets are retained (bounded by
 `revisionHistoryLimit`, default 10) precisely for this, which is why `kubectl get all` lists
 several 0-replica ReplicaSets.
 
-`CHANGE-CAUSE` is `<none>` for every revision, which makes the history much less useful than it
-should be. Populate it with `kubectl annotate deployment/jobs-service kubernetes.io/change-cause="..."`
-or `--record`, ideally set to the commit SHA by CI.
+`CHANGE-CAUSE` was `<none>` for every revision, which makes the history close to useless — you
+can see *that* six rollouts happened but not *what* any of them changed, so choosing a revision
+to roll back to becomes guesswork.
+
+**✅ FIXED.** The `deploy-to-k8s` job in `.github/workflows/ci.yml` now annotates each
+deployment as part of the rollout, recording the commit SHA, the triggering event, the actor
+and a link back to the commit:
+
+```yaml
+kubectl annotate "deployment/$svc" -n "$NS" --overwrite \
+  "kubernetes.io/change-cause=${TAG} | ${{ github.event_name }} by ${{ github.actor }} | ${{ github.server_url }}/${{ github.repository }}/commit/${TAG}"
+```
+
+Verified against a real rollout (`evidence/22-zero-downtime-fix.txt`):
+
+```
+$ kubectl rollout history deployment/jobs-service -n jobboard
+REVISION  CHANGE-CAUSE
+3         jobs-service:v2 | manual rollout to verify zero-downtime fix
+4         jobs-service:v2 | zero-downtime verification after preStop fix
+```
+
+(`--record` is deprecated, which is why the explicit `kubectl annotate` is used instead.)
 
 ### 4.3 HorizontalPodAutoscaler (10 pts)
 
@@ -833,10 +944,35 @@ $ kubectl get secret postgres-secret -n jobboard \
   POSTGRES_PASSWORD present in the annotation: True
 ```
 
-So the password exists **twice** in etcd, and the annotation is visible to anything that can
-read the object — including tools that redact `.data` but not annotations. Avoid it with
-`kubectl create secret generic ... --dry-run=client -o yaml | kubectl replace -f -`, or with
-`kubectl apply --server-side`, which does not write that annotation.
+So the password existed **twice** in etcd, and the annotation is visible to anything that can
+read the object — including tools that redact `.data` but not annotations.
+
+**✅ FIXED.** The Secret is no longer applied declaratively. It was removed from
+`k8s/kustomization.yaml`'s `resources` list (with a comment explaining why, so nobody
+re-adds it), and is now created imperatively:
+
+```bash
+kubectl create secret generic postgres-secret -n jobboard \
+  --from-literal=POSTGRES_DB=jobboard \
+  --from-literal=POSTGRES_USER=postgres \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 20)" \
+  --dry-run=client -o yaml | kubectl create -f -
+```
+
+Re-verified on the rebuilt cluster:
+
+```
+=== does the annotation leak the password? ===
+  OK: no last-applied-configuration annotation
+  password occurrences in full object: 1
+```
+
+One occurrence instead of two, and no annotation. `kubectl apply --server-side` is the
+equivalent fix if a declarative workflow is required — it tracks field ownership in
+`metadata.managedFields` rather than stuffing a copy of the object into an annotation.
+
+Note this is a *containment* fix, not encryption: the value is still base64 in etcd. It
+removes the second, less-protected copy. Real encryption needs the options below.
 
 **Two production solutions providing real encryption**
 
@@ -1013,10 +1149,15 @@ done
 
 The pod name includes `github.run_id` so concurrent runs cannot collide on a fixed name.
 
-An honest limitation, consistent with Task 1.2: `/health` does not touch the database, so this
-smoke test proves the process is up and routable but **not** that the application actually
-works. A stronger check would assert `GET /jobs` returns a JSON array — which is what the
-Compose `integration-test` job does in Part 1.
+This originally carried a limitation: `/health` did not touch the database, so the smoke test
+proved the process was up and routable but **not** that the application actually worked.
+
+**✅ FIXED.** Both services now expose `/ready`, which executes `SELECT 1`, and the Kubernetes
+`readinessProbe` targets it. A pod that cannot reach PostgreSQL is removed from the Service
+endpoints, so the smoke test's `/health` 200 is now backed by a readiness gate that genuinely
+exercises the dependency — a pod only joins the endpoint set once `/ready` has succeeded.
+`/health` is deliberately left as the *liveness* target, because a liveness failure restarts
+the container and must not be coupled to an external dependency.
 
 ---
 

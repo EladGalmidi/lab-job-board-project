@@ -1,0 +1,20 @@
+===== FIX VERIFICATION: NetworkPolicy enforcement under Calico =====
+NAME                      POD-SELECTOR   AGE
+postgres-network-policy   app=postgres   2m28s
+
+--- CNI in use ---
+  calico-node: Running
+
+--- TEST 1: an unlabelled pod must be DENIED postgres:5432 ---
+BLOCKED (policy enforced)
+
+--- TEST 2: jobs-service must still be ALLOWED ---
+Defaulted container "jobs-service" out of: jobs-service, wait-for-postgres (init)
+CONNECTED (allowed as intended)
+
+--- TEST 3: applications-service must still be ALLOWED ---
+Defaulted container "applications-service" out of: applications-service, wait-for-postgres (init)
+CONNECTED (allowed as intended)
+
+--- TEST 4: the app still works end to end through the policy ---
+  jobs returned: 5

@@ -15,7 +15,13 @@ namespace: jobboard
 
 resources:
   - 00-namespace.yaml
-  - 01-secret.yaml          # copy from 01-secret.yaml.example first!
+  # 01-secret.yaml is deliberately NOT listed here. `kubectl apply` records the
+  # full object -- including the base64 password -- in the
+  # kubectl.kubernetes.io/last-applied-configuration annotation, so the
+  # credential ends up stored a SECOND time in etcd, in a field that is not
+  # treated as sensitive and is echoed by `kubectl describe/get -o yaml`.
+  # Create it imperatively instead (see README-k8s / SOLUTION-k8s.md):
+  #   kubectl create secret generic postgres-secret ... --dry-run=client -o yaml   #     | kubectl apply -f - --server-side   # or: kubectl replace --force -f -
   - 02-postgres.yaml
   - 03-jobs-service.yaml
   - 04-applications-service.yaml

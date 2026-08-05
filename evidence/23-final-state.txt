@@ -1,0 +1,30 @@
+############ FINAL VERIFICATION ############
+
+===== Kubernetes =====
+  applications-service-68d9cbd97c-5lp29      1/1 Running
+  applications-service-68d9cbd97c-hg49s      1/1 Running
+  frontend-654d955c5b-g4klh                  1/1 Running
+  frontend-654d955c5b-smrcn                  1/1 Running
+  jobs-service-64655946b8-thxbs              1/1 Running
+  jobs-service-64655946b8-ws64q              1/1 Running
+  postgres-564dbdc44c-v44vh                  1/1 Running
+
+  networkpolicy: 1 | configmap: 1 | hpa: 2 | ingress: 3
+  app through the Service: 5 jobs
+===== Docker Compose =====
+applications-service  Up About a minute (healthy)
+jobboard-db  Up About a minute (healthy)
+jobboard-frontend  Up About a minute (healthy)
+jobs-service  Up About a minute (healthy)
+nginx-proxy  Up About a minute (healthy)
+
+  --- API smoke ---
+  GET /api/jobs/          -> 200 application/json
+  GET /api/jobs           -> 200
+  GET /api/applications/  -> 200
+  GET /                   -> 200
+  jobs returned           -> 5
+  CSP header              -> 1
+  duplicate X-Frame-Opts  -> 1
+  /ready (jobs)           -> 200
+  /ready (apps)           -> 200
