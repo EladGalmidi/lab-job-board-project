@@ -187,6 +187,8 @@ because SQLAlchemy retries, but `pg_isready` would be strictly better.
 
 **What the probes check, and the difference**
 
+As originally shipped, both probes pointed at the same endpoint:
+
 ```
 Liveness:   http-get http://:8000/health  delay=30s timeout=5s period=15s #failure=3
 Readiness:  http-get http://:8000/health  delay=10s timeout=5s period=10s #failure=3
@@ -202,13 +204,31 @@ Failing readiness is non-destructive: the pod stays alive and stops receiving tr
 exactly right for a transient dependency outage or a slow start. Failing liveness is
 destructive, so it should only test whether the process itself is stuck.
 
-**A real problem with this configuration:** both probes point at the same `/health` endpoint,
-which returns a hard-coded `{"status": "healthy"}` without touching the database. That was
-demonstrated in Part 1 Task 2.3, where both API services kept reporting healthy while returning
-500s with PostgreSQL down. Consequences here are worse than in Compose: readiness never fails,
-so a pod that cannot reach the database is never removed from the Service endpoints and keeps
-receiving traffic. The readiness probe should execute a real dependency check (`SELECT 1`)
-while liveness stays shallow.
+**A real problem with the original configuration:** both probes pointed at the same `/health`
+endpoint, which returned a hard-coded `{"status": "healthy"}` without touching the database.
+That was demonstrated in Part 1 Task 2.3, where both API services kept reporting healthy while
+returning 500s with PostgreSQL down. The consequences here are worse than in Compose: readiness
+never fails, so a pod that cannot reach the database is never removed from the Service
+endpoints and keeps receiving traffic it cannot serve.
+
+**✅ FIXED — the two probes now test different things.** Both services gained a `/ready`
+endpoint that executes `SELECT 1`; `/health` stays deliberately shallow. The manifests were
+updated accordingly:
+
+```
+$ kubectl get deployment jobs-service -n jobboard -o jsonpath='...'
+livenessProbe=/health      <- shallow: is the process wedged?
+readinessProbe=/ready      <- DB-backed: can it actually serve?
+```
+
+This is the correct split precisely because of the table above: a readiness failure is
+non-destructive (traffic is withdrawn, the pod lives), whereas a liveness failure is
+destructive (the container is killed). Pointing *liveness* at the database would mean a
+database blip restarts every pod simultaneously — destroying the connection pools and
+in-flight work needed to recover, and turning a brief outage into a cluster-wide restart
+storm. Verified end to end in Part 1 (`evidence/20-readiness-fix.txt`), where stopping
+PostgreSQL now flips both services to `unhealthy` and restarting it recovers them
+automatically.
 
 ### 1.3 Exec into a pod (5 pts)
 

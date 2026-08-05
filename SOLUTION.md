@@ -29,6 +29,9 @@ or reliability control is worse than none: it manufactures false confidence. Eac
 | 10 | `CHANGE-CAUSE` empty on every revision | CI rollout | ✅ fixed — K8s Task 4.2 |
 | 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — K8s pre-work |
 
+Rows 1–6 are written up in this document. Rows 7–11 are Kubernetes issues and are written up
+in [`SOLUTION-k8s.md`](SOLUTION-k8s.md), at the section named in the Status column.
+
 One item is **deliberately not fixed**: the README's `http://localhost/api/jobs/docs` URL.
 It is a documentation error rather than a code defect, and making that exact path serve Swagger
 would require coordinated `root_path`/`openapi_url` changes across both the Compose proxy and
@@ -79,11 +82,11 @@ artifact — the git blob `efb3202` and the raw GitHub file both contain the str
 The single most consequential defect: the job listing in the UI was broken, and the nginx
 container reported permanently unhealthy.
 
-`jobs-service/app/main.py` declares routes without a trailing slash (`@app.get("/jobs")`),
-while `nginx/nginx.conf` rewrote `^/api/jobs/(.*)` to `/jobs/$1`. A request for `/api/jobs/`
-therefore reached FastAPI as `/jobs/`, Starlette's `redirect_slashes` answered `307` to
-`http://localhost/jobs`, and that path no longer matched `location /api/jobs` — it fell
-through to `location /` and was proxied to the React frontend.
+`jobs-service/app/main.py` originally declared the collection routes without a trailing slash
+(`@app.get("/jobs")` only), while `nginx/nginx.conf` rewrote `^/api/jobs/(.*)` to `/jobs/$1`.
+A request for `/api/jobs/` therefore reached FastAPI as `/jobs/`, Starlette's
+`redirect_slashes` answered `307` to `http://localhost/jobs`, and that path no longer matched
+`location /api/jobs` — it fell through to `location /` and was proxied to the React frontend.
 
 Measured before the fix:
 
@@ -98,15 +101,38 @@ GET /api/applications   -> 200
 The applications-service is immune because Express treats `/applications` and
 `/applications/` as the same route; FastAPI does not.
 
-Fixed in `nginx/nginx.conf` by collapsing the bare collection path onto `/jobs` before the
-sub-path rule is considered:
+**Fixed in two layers.** The proxy fix came first, but it only covered the Compose stack —
+the identical failure reappeared through the Kubernetes ingress (see `SOLUTION-k8s.md`
+pre-work), because the ingress does its own rewrite to `/jobs/$2`. Patching every proxy
+separately would mean the defect returns with the next one added, so the root cause was fixed
+in the application as well.
 
-```nginx
-rewrite ^/api/jobs/?$   /jobs    break;   # /api/jobs and /api/jobs/ -> /jobs
-rewrite ^/api/jobs/(.*) /jobs/$1 break;   # /api/jobs/{id}           -> /jobs/{id}
-```
+1. **Application (the root cause).** The collection endpoints are now declared at *both*
+   paths, so no redirect is ever generated (`jobs-service/app/main.py:95-96`):
 
-After the fix, `GET /api/jobs/` returns `200 application/json`.
+   ```python
+   @app.get("/jobs", response_model=list[schemas.Job], tags=["Jobs"])
+   @app.get("/jobs/", response_model=list[schemas.Job], tags=["Jobs"], include_in_schema=False)
+   def list_jobs(...):
+   ```
+
+   `include_in_schema=False` keeps the alias out of the OpenAPI document so the docs still
+   show one canonical path. The same pairing is applied to `POST`.
+
+2. **Proxy (defence in depth).** `nginx/nginx.conf:73-74` still normalises the bare collection
+   path before the sub-path rule is considered, so the proxy never forwards a form the app
+   would have to redirect:
+
+   ```nginx
+   rewrite ^/api/jobs/?$   /jobs    break;   # /api/jobs and /api/jobs/ -> /jobs
+   rewrite ^/api/jobs/(.*) /jobs/$1 break;   # /api/jobs/{id}           -> /jobs/{id}
+   ```
+
+After the fix, `GET /api/jobs/` returns `200 application/json` through both the Compose proxy
+and the Kubernetes ingress. Two unit tests pin the behaviour —
+`test_jobs_collection_accepts_trailing_slash` and
+`test_jobs_collection_accepts_trailing_slash_on_post` — both asserting `follow_redirects=False`,
+because a `307` there *is* the bug.
 
 > Related documentation error: the README's `http://localhost/api/jobs/docs` cannot work — it
 > rewrites to `/jobs/docs`, which is not a FastAPI route. The Swagger UI lives at `/docs` on
@@ -490,7 +516,7 @@ Three observations, the second of which is the important one:
 
 3. **Recovery is automatic.** After `docker compose start postgres`, `GET /api/jobs` returned
    `200` again with no restart of the API services, because SQLAlchemy is configured with
-   `pool_pre_ping=True` (`jobs-service/app/database.py:10`) and node-postgres' `Pool`
+   `pool_pre_ping=True` (`jobs-service/app/database.py:91`) and node-postgres' `Pool`
    reconnects on demand.
 
 `restart: unless-stopped` is set on every service, so containers return automatically after a
