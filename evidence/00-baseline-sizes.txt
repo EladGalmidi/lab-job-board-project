@@ -1,0 +1,9 @@
+# Baseline image sizes - captured 2026-08-05T04:42:31Z
+# Repo state: as-shipped Dockerfiles + generated lockfiles (commit d171431 + lockfiles)
+
+REPOSITORY                           TAG         SIZE
+lab-job-board-jobs-service           latest      274MB
+lab-job-board-frontend               latest      98MB
+lab-job-board-nginx                  latest      97.7MB
+lab-job-board-applications-service   latest      223MB
+node                                 20-alpine   194MB

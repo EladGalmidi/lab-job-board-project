@@ -28,3 +28,6 @@ k8s/01-secret.yaml
 .vscode/
 .idea/
 *.swp
+
+# Docker secret file (Task 6.1) - never commit real credentials
+db_password.txt

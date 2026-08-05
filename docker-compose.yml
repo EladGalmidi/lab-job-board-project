@@ -1,8 +1,15 @@
+# Pin the Compose project name. Without it the project name is derived from the
+# directory (lab-job-board), so built images would be tagged
+# lab-job-board-jobs-service rather than the jobboard-* names the lab's Trivy
+# commands expect.
+name: jobboard
+
 services:
 
   # ── PostgreSQL Database ────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    # Digest-pinned for reproducibility, like the built images' base layers.
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     container_name: jobboard-db
     environment:
       POSTGRES_DB:       ${POSTGRES_DB:-jobboard}
@@ -31,6 +38,7 @@ services:
     build:
       context: ./jobs-service
       dockerfile: Dockerfile
+    image: jobboard-jobs-service:latest
     container_name: jobs-service
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-jobboard123}@postgres:5432/${POSTGRES_DB:-jobboard}
@@ -57,6 +65,7 @@ services:
     build:
       context: ./applications-service
       dockerfile: Dockerfile
+    image: jobboard-applications-service:latest
     container_name: applications-service
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-jobboard123}@postgres:5432/${POSTGRES_DB:-jobboard}
@@ -84,6 +93,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: jobboard-frontend:latest
     container_name: jobboard-frontend
     networks:
       - jobboard-network
@@ -104,6 +114,7 @@ services:
     build:
       context: ./nginx
       dockerfile: Dockerfile
+    image: jobboard-nginx:latest
     container_name: nginx-proxy
     ports:
       - "${NGINX_PORT:-80}:80"

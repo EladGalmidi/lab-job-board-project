@@ -1,0 +1,22 @@
+# Task 1 - Trivy results and image sizes
+# Captured 2026-08-05T05:10:26Z
+# BEFORE = as-shipped Dockerfiles; AFTER = hardened Dockerfiles
+
+IMAGE                            BEFORE (C/H/total)     AFTER (C/H/total)     
+-------------------------------- ---------------------- ----------------------
+jobboard-jobs-service            4/22/186               0/3/13                
+jobboard-applications-service    1/17/28                0/0/1                 
+jobboard-frontend                0/0/0                  0/0/0                 
+jobboard-nginx                   0/0/0                  0/0/0                 
+
+## Image sizes
+BEFORE:
+  jobboard-jobs-service          274MB
+  jobboard-applications-service  223MB
+  jobboard-frontend               98MB
+  jobboard-nginx                  97.7MB
+AFTER:
+jobboard-jobs-service  172MB
+jobboard-applications-service  210MB
+jobboard-nginx  97.7MB
+jobboard-frontend  98MB
