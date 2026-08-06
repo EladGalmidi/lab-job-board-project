@@ -1200,16 +1200,23 @@ the container and must not be coupled to an external dependency.
 
 - [x] All manifests applied — `evidence/k8s/01-inventory.txt`, `14-final-state.txt`
 - [x] All pods Running and Ready
-- [x] Application reachable and rendering ("6 Open Positions" through the ingress)
+- [x] Application reachable and rendering — "5 Open Positions" through the ingress
+      (`screenshots/07-kubectl_port_forward_ingress.png`). Five is the full seeded set: the
+      `seed-database` Job posts exactly five listings.
 - [x] Rolling update demonstrated — `evidence/k8s/10-rolling-update.txt`, `11-scaling-rollback.txt`
 - [x] HPA scaling event captured — `evidence/k8s/12-hpa.txt` (2 → 4 → 6)
 - [x] `k8s/09-network-policy.yaml` committed
 - [x] `k8s/10-configmap.yaml` committed
 - [x] `deploy-to-k8s` job added to the pipeline
 - [x] `SOLUTION-k8s.md` (this file)
-- [ ] **Screenshots — the two Kubernetes ones are still outstanding.** Four Part 1 screenshots
-      are in [`screenshots/`](screenshots/); the two remaining are `kubectl get all -n jobboard`
-      / `kubectl get pods -n jobboard`, and the app served through the ingress. The underlying
-      state is already captured as text in `evidence/k8s/01-inventory.txt` and
-      `evidence/k8s/14-final-state.txt`, but the lab asks for screenshots specifically. See the
-      note in the `SOLUTION.md` submission checklist for how to reach the ingress on Windows.
+- [x] **Screenshots** — the three Kubernetes captures are in [`screenshots/`](screenshots/):
+      `05-kubectl_get_all.png`, `06-kubectl_get_pods.png` and
+      `07-kubectl_port_forward_ingress.png`. The full index, including the four Part 1
+      captures, is in the `SOLUTION.md` submission checklist.
+
+The `kubectl get all` screenshot corroborates the inventory recorded in Task 1.1 above — the
+four ClusterIP addresses match exactly (`postgres` 10.105.40.217, `jobs-service` 10.103.145.195,
+`applications-service` 10.107.207.107, `frontend` 10.98.141.87), as do the READY ratios
+(`postgres` 1/1, the other three 2/2). The HPA memory percentages differ slightly from the
+Task 4.3 capture (33%/48% versus 13%/46%) simply because those are live gauges read at
+different moments; the CPU figures and the 2/6 min/max bounds are identical.

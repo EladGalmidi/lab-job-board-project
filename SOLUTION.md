@@ -1181,8 +1181,13 @@ $ curl -sI http://localhost | grep -i content-security
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
 ```
 
-The policy was also confirmed not to break the app: the page loads with **6 open positions
+The policy was also confirmed not to break the app: the page loads with **the full job list
 rendered and zero console messages**, so nothing is being blocked in practice.
+
+> The count was 6 at the moment of this check — the 5 seeded listings plus the
+> "Persistence Test Job" created in Task 3.1. `screenshots/01-app-localhost.png` shows 5,
+> because it was captured after a `docker compose down -v` reset re-ran `init-db/init.sql`.
+> Five is the reproducible number for anyone following the steps in this document.
 
 > Minor observation, since fixed: `X-Frame-Options` and `X-Content-Type-Options` were each
 > returned twice, because both the proxy (`nginx/nginx.conf`) and the frontend's own server
@@ -1254,24 +1259,22 @@ Part 2 (Kubernetes) is written up separately in [`SOLUTION-k8s.md`](SOLUTION-k8s
 - [x] `k8s/09-network-policy.yaml` and `k8s/10-configmap.yaml`, with the policy verified as
       genuinely **enforced** on a Calico cluster
 
-**Screenshots** — four captured in [`screenshots/`](screenshots/):
+**Screenshots** — all required captures are in [`screenshots/`](screenshots/):
 
-- [x] 1. The running application at `http://localhost`
-- [x] 2. `docker compose ps` showing all containers healthy
-- [x] 3. The successful GitHub Actions pipeline
-- [x] 4. The Docker Hub repository showing the pushed images
-- [ ] 5. `kubectl get all -n jobboard` / `kubectl get pods -n jobboard`
-- [ ] 6. The app served through the Kubernetes ingress
+| Requirement | File | Shows |
+|---|---|---|
+| Running application | `01-app-localhost.png` | The job board at `http://localhost`, 5 open positions |
+| All containers healthy | `02-docker-compose-ps.png` | `docker compose ps -a` — all five `(healthy)`, `jobboard-*` image names, digest-pinned postgres |
+| Green pipeline | `03-pipeline-green.png` | Run #3 **Success**, all six stages green, `deploy-to-k8s` correctly skipped by its gate |
+| Docker Hub images | `04-dockerhub-images.png` | All four `eladgalmidi/jobboard-*` repositories |
+| K8s objects | `05-kubectl_get_all.png` | `kubectl get all -n jobboard` — pods, services, deployments, replicasets, HPAs |
+| K8s pods Ready | `06-kubectl_get_pods.png` | All seven pods `1/1 Running` |
+| App via the ingress | `07-kubectl_port_forward_ingress.png` | The app at `http://localhost:18080`, served through the ingress controller |
 
-Items 5 and 6 are the two still outstanding. Both are Part 2 evidence; the underlying state is
-already captured as text in [`evidence/k8s/`](evidence/k8s/) and
-[`evidence/23-final-state.txt`](evidence/23-final-state.txt), but the K8s lab's submission
-list asks for screenshots specifically.
-
-> Note for item 6 on this setup: `minikube ip` is not routable from Windows with the docker
-> driver, so the app is reached either via `minikube tunnel` (needs elevation) or
-> `kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80` and then
-> `http://localhost:18080`. See the K8s pre-work notes.
+> Note on item 7: `minikube ip` is not routable from Windows with the docker driver, so the
+> ingress is reached either via `minikube tunnel` (needs elevation) or
+> `kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80`, which is
+> what the screenshot shows. See the K8s pre-work notes.
 
 ### Reproducing the verified state
 
