@@ -144,10 +144,10 @@ Full output in `evidence/k8s/01-inventory.txt`.
 
 | Service | Type | CLUSTER-IP | Port |
 |---|---|---|---|
-| `postgres` | ClusterIP | 10.96.121.28 | 5432 |
-| `jobs-service` | ClusterIP | 10.101.55.34 | 8000 |
-| `applications-service` | ClusterIP | 10.104.70.105 | 3001 |
-| `frontend` | ClusterIP | 10.106.44.194 | 80 |
+| `postgres` | ClusterIP | 10.105.40.217 | 5432 |
+| `jobs-service` | ClusterIP | 10.103.145.195 | 8000 |
+| `applications-service` | ClusterIP | 10.107.207.107 | 3001 |
+| `frontend` | ClusterIP | 10.98.141.87 | 80 |
 
 **Storage class assigned to `postgres-pvc`:** `standard`, provisioned by
 `k8s.io/minikube-hostpath`, bound to `pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd` (1Gi, RWO).
@@ -253,11 +253,11 @@ current user misbehaves. Aligning the image UIDs to 1000 in Task 1 removed that 
 **DNS resolution**
 
 ```
-postgres                              -> 10.96.121.28
-postgres.jobboard                     -> 10.96.121.28
-postgres.jobboard.svc.cluster.local   -> 10.96.121.28
-jobs-service                          -> 10.101.55.34
-applications-service                  -> 10.104.70.105
+postgres                              -> 10.105.40.217
+postgres.jobboard                     -> 10.105.40.217
+postgres.jobboard.svc.cluster.local   -> 10.105.40.217
+jobs-service                          -> 10.103.145.195
+applications-service                  -> 10.107.207.107
 ```
 
 **Full DNS name of the postgres Service:** `postgres.jobboard.svc.cluster.local`
@@ -304,7 +304,7 @@ so the upstream receives **`/applications/`**. Express treats `/applications` an
 `/applications/` as the same route, so this is harmless — unlike the jobs-service, where the
 identical pattern caused the 307 documented above.
 
-**3. Which Service and port.** `applications-service:3001` (ClusterIP `10.104.70.105`).
+**3. Which Service and port.** `applications-service:3001` (ClusterIP `10.107.207.107`).
 
 **4. Which Pod, and how.** The Service's `selector: app: applications-service` matches pod
 labels; the endpoints controller maintains the backing list:
@@ -382,11 +382,11 @@ Live demonstration:
 $ kubectl patch svc frontend -n jobboard -p '{"spec":{"type":"NodePort"}}'
 service/frontend patched
 NAME       TYPE       CLUSTER-IP      PORT(S)
-frontend   NodePort   10.106.44.194   80:31515/TCP
+frontend   NodePort   10.98.141.87   80:31515/TCP
 
 $ kubectl patch svc frontend -n jobboard -p '{"spec":{"type":"ClusterIP"}}'
 NAME       TYPE        CLUSTER-IP      PORT(S)
-frontend   ClusterIP   10.106.44.194   80/TCP
+frontend   ClusterIP   10.98.141.87   80/TCP
 ```
 
 Note the ClusterIP was preserved across both changes — NodePort is additive, layering a
