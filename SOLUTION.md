@@ -704,6 +704,171 @@ The restored database matches the live one exactly, including the row created in
 > `No such file or directory` because MSYS rewrites `/tmp/...` into a Windows path before
 > Docker sees it. Prefix the command with `MSYS_NO_PATHCONV=1`.
 
+## Task 4 — CI/CD Pipeline with GitHub Actions (25 pts)
+
+### 4.1 Repository setup (3 pts) — done
+
+The project was pushed to a new GitHub repository and the following repository secrets were
+added under `Settings → Secrets and variables → Actions`:
+
+| Secret | Value |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (**not** the account password) |
+
+An access token is used rather than the account password because it can be scoped to
+read/write on repositories only, revoked independently of the account, and rotated without
+changing the login credentials — so a leaked token is a contained incident rather than a full
+account compromise.
+
+Two further settings are optional and control the Kubernetes deployment job, which is skipped
+unless both are present: repository **variable** `K8S_DEPLOY_ENABLED=true`, and secret
+`KUBECONFIG_BASE64`. The rationale for gating that job is in K8s Task 6.1 in
+[`SOLUTION-k8s.md`](SOLUTION-k8s.md) — a GitHub-hosted runner cannot reach a local minikube
+cluster, so leaving it ungated would fail every run and cost the Task 4.2 marks for a green
+pipeline.
+
+### 4.2 The pipeline
+
+`.github/workflows/ci.yml` did not exist in the delivered repository despite the
+README's structure diagram listing it, so the whole pipeline is authored here. All six
+required stages are implemented:
+
+| Stage | Job | What it does |
+|---|---|---|
+| `lint-test-python` | ✅ | `ruff check` + `pytest` on jobs-service |
+| `lint-test-node` | ✅ | `npm ci` + `npm audit` (matrix over both Node services) + frontend build |
+| `build-images` | ✅ | Buildx builds all 4 images, exports tarballs as artifacts |
+| `scan-images` | ✅ | Trivy scans each image, uploads reports, gates on CRITICAL |
+| `integration-test` | ✅ | Brings up the real stack and asserts against the live API |
+| `push-to-registry` | ✅ | Pushes to Docker Hub, `main` only |
+
+Job graph (verified by parsing the workflow):
+
+```
+lint-test-python ─┐
+                  ├─> build-images ─┬─> scan-images ──────┐
+lint-test-node ───┘                 └─> integration-test ─┴─> push-to-registry ─> deploy-to-k8s
+                                                                (main only)         (gated)
+```
+
+**Design decisions worth explaining**
+
+*Images are built once and passed between jobs.* `build-images` exports each image with
+`outputs: type=docker,dest=/tmp/<svc>.tar` and uploads it as an artifact; `scan-images`
+downloads and `docker load`s it. This means Trivy scans **exactly the bits that were built**
+rather than a rebuild that might resolve differently. `push-to-registry` does rebuild, but
+every layer is a GitHub Actions cache hit, so it is fast and reproducible — the base images
+are digest-pinned, so the result is identical.
+
+*Two Trivy steps, not one.* The lab asks for "exit-code 0, report generated", so the first
+step always produces a report and never fails. A second step then fails the build on
+CRITICAL findings with `ignore-unfixed: true`. Task 1 brought every image to zero CRITICALs,
+so this is a meaningful regression gate rather than decoration; `ignore-unfixed` prevents the
+build from being permanently red over a CVE with no published patch — which is exactly the
+situation the Debian base was in before the Alpine rebase.
+
+*`npm audit --omit=dev --audit-level=high`.* Dev dependencies never ship in the runtime image,
+so failing on them would be noise. Verified locally: both services currently exit 0.
+
+*The integration test doubles as a regression guard.* Beyond the health and CRUD assertions,
+it explicitly checks that `GET /api/jobs/` returns `application/json` — the exact defect
+described in the pre-work section, where that path returned `text/html` from the SPA. It also
+asserts the CSP header from Task 6.2 is present.
+
+*`push-to-registry` is `main`-only and excludes pull requests.* `github.event_name != 'pull_request'`
+is required in addition to the branch check, because a PR targeting `main` would otherwise
+match and attempt a push using secrets that are not exposed to fork PRs.
+
+### 4.3 Unit tests (12 pts)
+
+`jobs-service/tests/test_main.py` — **15 tests, all passing without a database:**
+
+```
+$ python -m pytest tests/ -v
+tests/test_main.py::test_health_returns_healthy PASSED                   [  6%]
+tests/test_main.py::test_health_needs_no_database PASSED                 [ 13%]
+tests/test_main.py::test_ready_returns_200_when_database_reachable PASSED [ 20%]
+tests/test_main.py::test_ready_returns_503_when_database_unavailable PASSED [ 26%]
+tests/test_main.py::test_health_still_ok_when_database_unavailable PASSED [ 33%]
+tests/test_main.py::test_create_job_returns_201 PASSED                   [ 40%]
+tests/test_main.py::test_create_job_is_persisted PASSED                  [ 46%]
+tests/test_main.py::test_create_job_missing_fields_returns_422 PASSED    [ 53%]
+tests/test_main.py::test_create_job_empty_body_returns_422 PASSED        [ 60%]
+tests/test_main.py::test_create_job_violating_min_length_returns_422 PASSED [ 66%]
+tests/test_main.py::test_get_nonexistent_job_returns_404 PASSED          [ 73%]
+tests/test_main.py::test_list_jobs_empty_by_default PASSED               [ 80%]
+tests/test_main.py::test_list_jobs_returns_created_jobs PASSED           [ 86%]
+tests/test_main.py::test_jobs_collection_accepts_trailing_slash PASSED   [ 93%]
+tests/test_main.py::test_jobs_collection_accepts_trailing_slash_on_post PASSED [100%]
+
+============================== 15 passed in 0.36s ==============================
+```
+
+The four required cases are covered by `test_health_returns_healthy`,
+`test_create_job_returns_201`, `test_create_job_missing_fields_returns_422` and
+`test_get_nonexistent_job_returns_404`. The remaining eleven fall into three groups:
+
+- **Readiness** (3) — `/ready` returns 200 when the database is reachable and 503 when it is
+  not, while `/health` stays 200 throughout. These pin the liveness/readiness split described
+  in Task 2.3; the failure is injected with `unittest.mock` at the session, because disposing
+  an in-memory SQLite engine merely recreates an empty database rather than simulating an
+  outage.
+- **Routing contract** (2) — both `/jobs` and `/jobs/` must serve the collection *directly*,
+  asserted with `follow_redirects=False`. A `307` there is the pre-work defect returning.
+- **Persistence, validation and listing** (6) — a created job is retrievable, `JobCreate`
+  constraints are enforced rather than just presence, and the collection reflects what was
+  written.
+
+**How the database is mocked** — an in-memory SQLite database, wired in `tests/conftest.py`.
+Two details are essential and neither is obvious:
+
+1. **`DATABASE_URL` is set before `app.main` is imported.** `app/database.py` builds its
+   engine at module scope, and `app/main.py` calls
+   `models.Base.metadata.create_all(bind=engine)` at import time. Overriding after the import
+   would be too late — the real PostgreSQL URL would already have been resolved and the import
+   would fail in CI where no database exists. (This also interacts with Task 6.1: the
+   hard-coded fallback URL was removed, so the module now raises rather than silently
+   defaulting — which is correct, but it means the test suite *must* provide configuration.)
+
+2. **`StaticPool` with `check_same_thread=False`.** An in-memory SQLite database normally
+   exists only for the lifetime of a single connection, so each connection taken from a normal
+   pool would see a separate, empty database — tables created by the fixture would be invisible
+   to the request handler. `StaticPool` reuses one connection for the whole engine, and
+   `check_same_thread=False` is needed because `TestClient` dispatches requests on a different
+   thread.
+
+`get_db` is then replaced via `app.dependency_overrides`, FastAPI's supported injection seam,
+so no application code is modified for testability. Each test gets a freshly created and
+dropped schema, so tests cannot leak state into one another.
+
+**Lint configuration.** `jobs-service/ruff.toml` selects `E, F, I, N, UP, B`. One exemption is
+deliberate and worth justifying rather than hiding: bugbear's `B008` forbids function calls in
+argument defaults, which flags every `db: Session = Depends(get_db)` in `app/main.py`. That is
+the documented FastAPI dependency-injection idiom — FastAPI inspects the default to build its
+dependency graph, so it genuinely cannot be moved into the function body. Rather than
+disabling `B008` wholesale (which would also stop catching real bugs like `def f(x=[])`), the
+FastAPI callables are declared via `extend-immutable-calls`. Import ordering and a few
+outdated typing constructs (`typing.List` → `list`, `Optional[str]` → `str | None`) were
+auto-fixed. `ruff check .` now reports **All checks passed!**
+
+### Verification status
+
+Everything that can be verified locally has been:
+
+- `ruff check .` → clean
+- `pytest` → 15 passed, with no database running
+- `npm audit --omit=dev --audit-level=high` → exit 0 for both Node services
+- workflow YAML parses, and the job graph resolves as intended
+- every assertion in the `integration-test` job was first executed by hand against the live
+  stack (recorded throughout this document)
+
+The repository has since been pushed to GitHub with both Docker Hub secrets configured
+(Task 4.1), so the pipeline runs against the real registry. The green-pipeline and Docker Hub
+screenshots are in [`screenshots/`](screenshots/).
+
+---
+
 ---
 
 ## Task 5 — Networking & Service Communication (10 pts)
@@ -1030,151 +1195,6 @@ rendered and zero console messages**, so nothing is being blocked in practice.
 
 ---
 
-## Task 4 — CI/CD Pipeline with GitHub Actions (25 pts)
-
-### 4.1 Repository setup (3 pts)
-
-> **This step requires action from the repository owner and is the one part of
-> this lab that cannot be completed locally.** Push the repository to GitHub,
-> then add under `Settings → Secrets and variables → Actions`:
->
-> | Secret | Value |
-> |---|---|
-> | `DOCKERHUB_USERNAME` | Docker Hub username |
-> | `DOCKERHUB_TOKEN` | Docker Hub access token (**not** the account password) |
->
-> An access token is used rather than the password because it can be scoped to
-> read/write on repositories only, revoked independently, and rotated without
-> changing the account credentials.
->
-> Two optional settings for the Kubernetes job, which is skipped unless both are
-> present: repository **variable** `K8S_DEPLOY_ENABLED=true`, and secret
-> `KUBECONFIG_BASE64`. See K8s Task 6.1 in `SOLUTION-k8s.md`.
-
-### 4.2 The pipeline
-
-`.github/workflows/ci.yml` did not exist in the delivered repository despite the
-README's structure diagram listing it, so the whole pipeline is authored here. All six
-required stages are implemented:
-
-| Stage | Job | What it does |
-|---|---|---|
-| `lint-test-python` | ✅ | `ruff check` + `pytest` on jobs-service |
-| `lint-test-node` | ✅ | `npm ci` + `npm audit` (matrix over both Node services) + frontend build |
-| `build-images` | ✅ | Buildx builds all 4 images, exports tarballs as artifacts |
-| `scan-images` | ✅ | Trivy scans each image, uploads reports, gates on CRITICAL |
-| `integration-test` | ✅ | Brings up the real stack and asserts against the live API |
-| `push-to-registry` | ✅ | Pushes to Docker Hub, `main` only |
-
-Job graph (verified by parsing the workflow):
-
-```
-lint-test-python ─┐
-                  ├─> build-images ─┬─> scan-images ──────┐
-lint-test-node ───┘                 └─> integration-test ─┴─> push-to-registry ─> deploy-to-k8s
-                                                                (main only)         (gated)
-```
-
-**Design decisions worth explaining**
-
-*Images are built once and passed between jobs.* `build-images` exports each image with
-`outputs: type=docker,dest=/tmp/<svc>.tar` and uploads it as an artifact; `scan-images`
-downloads and `docker load`s it. This means Trivy scans **exactly the bits that were built**
-rather than a rebuild that might resolve differently. `push-to-registry` does rebuild, but
-every layer is a GitHub Actions cache hit, so it is fast and reproducible — the base images
-are digest-pinned, so the result is identical.
-
-*Two Trivy steps, not one.* The lab asks for "exit-code 0, report generated", so the first
-step always produces a report and never fails. A second step then fails the build on
-CRITICAL findings with `ignore-unfixed: true`. Task 1 brought every image to zero CRITICALs,
-so this is a meaningful regression gate rather than decoration; `ignore-unfixed` prevents the
-build from being permanently red over a CVE with no published patch — which is exactly the
-situation the Debian base was in before the Alpine rebase.
-
-*`npm audit --omit=dev --audit-level=high`.* Dev dependencies never ship in the runtime image,
-so failing on them would be noise. Verified locally: both services currently exit 0.
-
-*The integration test doubles as a regression guard.* Beyond the health and CRUD assertions,
-it explicitly checks that `GET /api/jobs/` returns `application/json` — the exact defect
-described in the pre-work section, where that path returned `text/html` from the SPA. It also
-asserts the CSP header from Task 6.2 is present.
-
-*`push-to-registry` is `main`-only and excludes pull requests.* `github.event_name != 'pull_request'`
-is required in addition to the branch check, because a PR targeting `main` would otherwise
-match and attempt a push using secrets that are not exposed to fork PRs.
-
-### 4.3 Unit tests (12 pts)
-
-`jobs-service/tests/test_main.py` — **11 tests, all passing without a database:**
-
-```
-$ python -m pytest tests/ -v
-tests/test_main.py::test_health_returns_healthy PASSED                   [  9%]
-tests/test_main.py::test_health_needs_no_database PASSED                 [ 18%]
-tests/test_main.py::test_create_job_returns_201 PASSED                   [ 27%]
-tests/test_main.py::test_create_job_is_persisted PASSED                  [ 36%]
-tests/test_main.py::test_create_job_missing_fields_returns_422 PASSED    [ 45%]
-tests/test_main.py::test_create_job_empty_body_returns_422 PASSED        [ 54%]
-tests/test_main.py::test_create_job_violating_min_length_returns_422 PASSED [ 63%]
-tests/test_main.py::test_get_nonexistent_job_returns_404 PASSED          [ 72%]
-tests/test_main.py::test_list_jobs_empty_by_default PASSED               [ 81%]
-tests/test_main.py::test_list_jobs_returns_created_jobs PASSED           [ 90%]
-tests/test_main.py::test_jobs_trailing_slash_redirects PASSED            [100%]
-
-============================== 11 passed in 0.27s ==============================
-```
-
-The four required cases are covered by `test_health_returns_healthy`,
-`test_create_job_returns_201`, `test_create_job_missing_fields_returns_422` and
-`test_get_nonexistent_job_returns_404`; the rest add persistence, constraint validation, list
-behaviour and a routing-contract guard.
-
-**How the database is mocked** — an in-memory SQLite database, wired in `tests/conftest.py`.
-Two details are essential and neither is obvious:
-
-1. **`DATABASE_URL` is set before `app.main` is imported.** `app/database.py` builds its
-   engine at module scope, and `app/main.py` calls
-   `models.Base.metadata.create_all(bind=engine)` at import time. Overriding after the import
-   would be too late — the real PostgreSQL URL would already have been resolved and the import
-   would fail in CI where no database exists. (This also interacts with Task 6.1: the
-   hard-coded fallback URL was removed, so the module now raises rather than silently
-   defaulting — which is correct, but it means the test suite *must* provide configuration.)
-
-2. **`StaticPool` with `check_same_thread=False`.** An in-memory SQLite database normally
-   exists only for the lifetime of a single connection, so each connection taken from a normal
-   pool would see a separate, empty database — tables created by the fixture would be invisible
-   to the request handler. `StaticPool` reuses one connection for the whole engine, and
-   `check_same_thread=False` is needed because `TestClient` dispatches requests on a different
-   thread.
-
-`get_db` is then replaced via `app.dependency_overrides`, FastAPI's supported injection seam,
-so no application code is modified for testability. Each test gets a freshly created and
-dropped schema, so tests cannot leak state into one another.
-
-**Lint configuration.** `jobs-service/ruff.toml` selects `E, F, I, N, UP, B`. One exemption is
-deliberate and worth justifying rather than hiding: bugbear's `B008` forbids function calls in
-argument defaults, which flags every `db: Session = Depends(get_db)` in `app/main.py`. That is
-the documented FastAPI dependency-injection idiom — FastAPI inspects the default to build its
-dependency graph, so it genuinely cannot be moved into the function body. Rather than
-disabling `B008` wholesale (which would also stop catching real bugs like `def f(x=[])`), the
-FastAPI callables are declared via `extend-immutable-calls`. Import ordering and a few
-outdated typing constructs (`typing.List` → `list`, `Optional[str]` → `str | None`) were
-auto-fixed. `ruff check .` now reports **All checks passed!**
-
-### Verification status
-
-Everything that can be verified locally has been:
-
-- `ruff check .` → clean
-- `pytest` → 11 passed, with no database running
-- `npm audit --omit=dev --audit-level=high` → exit 0 for both Node services
-- workflow YAML parses, and the job graph resolves as intended
-- every assertion in the `integration-test` job was first executed by hand against the live
-  stack (recorded throughout this document)
-
-**What remains for the repository owner:** pushing to GitHub with the two Docker Hub secrets
-configured. Until then the pipeline cannot produce a green run or push images, so the
-screenshots for Task 4.2 and the Docker Hub repository listing must be taken after that push.
 
 ---
 
@@ -1210,7 +1230,7 @@ Part 2 (Kubernetes) is written up separately in [`SOLUTION-k8s.md`](SOLUTION-k8s
 | File | Purpose |
 |---|---|
 | `.github/workflows/ci.yml` | The full 6-stage pipeline + gated `deploy-to-k8s` |
-| `jobs-service/tests/{conftest.py,test_main.py}` | 12 unit tests, no database required |
+| `jobs-service/tests/{conftest.py,test_main.py}` | 15 unit tests, no database required |
 | `jobs-service/requirements-dev.txt`, `ruff.toml` | Test and lint tooling |
 | `docker-compose.secrets.yml` | Task 6.1 Docker secrets overlay |
 | `k8s/09-network-policy.yaml`, `k8s/10-configmap.yaml` | K8s Tasks 2.4 and 5.2 |
@@ -1222,23 +1242,36 @@ Part 2 (Kubernetes) is written up separately in [`SOLUTION-k8s.md`](SOLUTION-k8s
 
 ## Submission checklist
 
-Everything verifiable locally has been executed and captured. Two items need you:
-
 - [x] `SOLUTION.md` with all Part 1 answers
 - [x] `SOLUTION-k8s.md` with all Part 2 answers
-- [x] `backup_*.sql` committed (Task 3.3) and restore executed, not just documented
+- [x] `backup_*.sql` and `k8s-backup_*.sql` committed (Task 3.3 / K8s 3.3), restores executed
+      rather than only documented
 - [x] Hardened Dockerfiles — all 5 CRITICAL CVEs eliminated
 - [x] `docker-compose.yml` with logging, fail-fast env vars, digest pins
-- [x] 12 unit tests passing with no database
+- [x] 15 unit tests passing with no database
 - [x] CI pipeline authored with all six required stages
-- [x] **Push to GitHub** and add the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` secrets (Task 4.1)
-- [x] **Screenshots**, which must be captured from a live screen:
-  1. The running application at `http://localhost`
-  2. `docker compose ps` showing all containers healthy
-  3. The successful GitHub Actions pipeline — only possible after the push above
-  4. The Docker Hub repository showing the pushed images — likewise
-  5. `kubectl get all -n jobboard` and `kubectl get pods -n jobboard`
-  6. The app served through the Kubernetes ingress
+- [x] Pushed to GitHub with `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` configured (Task 4.1)
+- [x] `k8s/09-network-policy.yaml` and `k8s/10-configmap.yaml`, with the policy verified as
+      genuinely **enforced** on a Calico cluster
+
+**Screenshots** — four captured in [`screenshots/`](screenshots/):
+
+- [x] 1. The running application at `http://localhost`
+- [x] 2. `docker compose ps` showing all containers healthy
+- [x] 3. The successful GitHub Actions pipeline
+- [x] 4. The Docker Hub repository showing the pushed images
+- [ ] 5. `kubectl get all -n jobboard` / `kubectl get pods -n jobboard`
+- [ ] 6. The app served through the Kubernetes ingress
+
+Items 5 and 6 are the two still outstanding. Both are Part 2 evidence; the underlying state is
+already captured as text in [`evidence/k8s/`](evidence/k8s/) and
+[`evidence/23-final-state.txt`](evidence/23-final-state.txt), but the K8s lab's submission
+list asks for screenshots specifically.
+
+> Note for item 6 on this setup: `minikube ip` is not routable from Windows with the docker
+> driver, so the app is reached either via `minikube tunnel` (needs elevation) or
+> `kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80` and then
+> `http://localhost:18080`. See the K8s pre-work notes.
 
 ### Reproducing the verified state
 

@@ -1207,4 +1207,9 @@ the container and must not be coupled to an external dependency.
 - [x] `k8s/10-configmap.yaml` committed
 - [x] `deploy-to-k8s` job added to the pipeline
 - [x] `SOLUTION-k8s.md` (this file)
-- [ ] **Screenshots — for you to capture** (see the note at the end of `SOLUTION.md`)
+- [ ] **Screenshots — the two Kubernetes ones are still outstanding.** Four Part 1 screenshots
+      are in [`screenshots/`](screenshots/); the two remaining are `kubectl get all -n jobboard`
+      / `kubectl get pods -n jobboard`, and the app served through the ingress. The underlying
+      state is already captured as text in `evidence/k8s/01-inventory.txt` and
+      `evidence/k8s/14-final-state.txt`, but the lab asks for screenshots specifically. See the
+      note in the `SOLUTION.md` submission checklist for how to reach the ingress on Windows.
