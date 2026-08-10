@@ -1,59 +1,72 @@
 ===== K8s Task 1.1: object inventory =====
-$ kubectl get all -n jobboard
-NAME                                        READY   STATUS    RESTARTS   AGE
-pod/applications-service-5b5f66b9bd-47lh2   1/1     Running   0          7m13s
-pod/applications-service-5b5f66b9bd-mvwx2   1/1     Running   0          6m58s
-pod/frontend-65754f76d6-ccf78               1/1     Running   0          10m
-pod/frontend-65754f76d6-lc6q8               1/1     Running   0          10m
-pod/jobs-service-78565db9d6-4p6cx           1/1     Running   0          66s
-pod/jobs-service-78565db9d6-rt54n           1/1     Running   0          53s
-pod/postgres-5b8d74874c-p5vcb               1/1     Running   0          10m
+# Recaptured on the Calico cluster. The original capture was taken on the
+# first cluster (default bridge CNI), which was deleted and rebuilt with
+# --cni=calico to make the NetworkPolicy enforce (K8s Task 2.4). The rebuild
+# reassigned every ClusterIP, so this file now matches the addresses quoted
+# in SOLUTION-k8s.md Task 1.1 and shown in screenshots/05-kubectl_get_all.png.
 
-NAME                           TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
-service/applications-service   ClusterIP   10.104.70.105   <none>        3001/TCP   10m
-service/frontend               ClusterIP   10.106.44.194   <none>        80/TCP     10m
-service/jobs-service           ClusterIP   10.101.55.34    <none>        8000/TCP   10m
-service/postgres               ClusterIP   10.96.121.28    <none>        5432/TCP   10m
+$ kubectl get all -n jobboard
+NAME                                        READY   STATUS    RESTARTS        AGE
+pod/applications-service-69fb75d65d-ckbd6   1/1     Running   0               95s
+pod/applications-service-69fb75d65d-v6bf2   1/1     Running   0               115s
+pod/frontend-5964b669bf-rhlzn               1/1     Running   0               85s
+pod/frontend-5964b669bf-wjx8f               1/1     Running   0               115s
+pod/jobs-service-5ccfd9c7b7-rq4wt           1/1     Running   0               115s
+pod/jobs-service-5ccfd9c7b7-w7vs7           1/1     Running   0               85s
+pod/postgres-564dbdc44c-h597x               1/1     Running   1 (4m19s ago)   4d1h
+
+NAME                           TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+service/applications-service   ClusterIP   10.107.207.107   <none>        3001/TCP   5d3h
+service/frontend               ClusterIP   10.98.141.87     <none>        80/TCP     5d3h
+service/jobs-service           ClusterIP   10.103.145.195   <none>        8000/TCP   5d3h
+service/postgres               ClusterIP   10.105.40.217    <none>        5432/TCP   5d3h
 
 NAME                                   READY   UP-TO-DATE   AVAILABLE   AGE
-deployment.apps/applications-service   2/2     2            2           10m
-deployment.apps/frontend               2/2     2            2           10m
-deployment.apps/jobs-service           2/2     2            2           10m
-deployment.apps/postgres               1/1     1            1           10m
+deployment.apps/applications-service   2/2     2            2           5d3h
+deployment.apps/frontend               2/2     2            2           5d3h
+deployment.apps/jobs-service           2/2     2            2           5d3h
+deployment.apps/postgres               1/1     1            1           5d3h
 
 NAME                                              DESIRED   CURRENT   READY   AGE
-replicaset.apps/applications-service-5b5f66b9bd   2         2         2       7m13s
-replicaset.apps/applications-service-5b7f8cdcc4   0         0         0       7m13s
-replicaset.apps/applications-service-5dd8c5968f   0         0         0       10m
-replicaset.apps/frontend-65754f76d6               2         2         2       10m
-replicaset.apps/jobs-service-56cb877c8f           0         0         0       10m
-replicaset.apps/jobs-service-59ff544c96           0         0         0       7m13s
-replicaset.apps/jobs-service-78565db9d6           2         2         2       66s
-replicaset.apps/jobs-service-d7f499846            0         0         0       7m13s
-replicaset.apps/postgres-5b8d74874c               1         1         1       10m
+replicaset.apps/applications-service-68d9cbd97c   0         0         0       5d3h
+replicaset.apps/applications-service-69fb75d65d   2         2         2       115s
+replicaset.apps/frontend-5964b669bf               2         2         2       115s
+replicaset.apps/frontend-654d955c5b               0         0         0       5d3h
+replicaset.apps/jobs-service-5ccfd9c7b7           2         2         2       116s
+replicaset.apps/jobs-service-64655946b8           0         0         0       5d3h
+replicaset.apps/jobs-service-78b77ff84c           0         0         0       5d3h
+replicaset.apps/postgres-564dbdc44c               1         1         1       5d3h
 
-NAME                                                           REFERENCE                         TARGETS                                     MINPODS   MAXPODS   REPLICAS   AGE
-horizontalpodautoscaler.autoscaling/applications-service-hpa   Deployment/applications-service   cpu: 2%/60%, memory: 11%/75%                2         6         2          10m
-horizontalpodautoscaler.autoscaling/jobs-service-hpa           Deployment/jobs-service           cpu: <unknown>/60%, memory: <unknown>/75%   2         6         2          10m
+NAME                                                           REFERENCE                         TARGETS                               MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/applications-service-hpa   Deployment/applications-service   cpu: 8%/60%, memory: 10%/75%          2         6         2          5d3h
+horizontalpodautoscaler.autoscaling/jobs-service-hpa           Deployment/jobs-service           cpu: <unknown>/60%, memory: 46%/75%   2         6         2          5d3h
 
 $ kubectl get pvc -n jobboard
 NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
-postgres-pvc   Bound    pvc-4c40ed67-175d-462f-afc8-1a6920eb30fd   1Gi        RWO            standard       <unset>                 10m
+postgres-pvc   Bound    pvc-f87a5f62-5004-4900-9d3e-bc167c7e727a   1Gi        RWO            standard       <unset>                 5d3h
 
 $ kubectl get ingress -n jobboard
 NAME                   CLASS   HOSTS   ADDRESS        PORTS   AGE
-applications-ingress   nginx   *       192.168.49.2   80      10m
-frontend-ingress       nginx   *       192.168.49.2   80      10m
-jobs-ingress           nginx   *       192.168.49.2   80      10m
+applications-ingress   nginx   *       192.168.49.2   80      5d3h
+frontend-ingress       nginx   *       192.168.49.2   80      5d3h
+jobs-ingress           nginx   *       192.168.49.2   80      5d3h
 
 $ kubectl get hpa -n jobboard
-NAME                       REFERENCE                         TARGETS                                     MINPODS   MAXPODS   REPLICAS   AGE
-applications-service-hpa   Deployment/applications-service   cpu: 2%/60%, memory: 11%/75%                2         6         2          10m
-jobs-service-hpa           Deployment/jobs-service           cpu: <unknown>/60%, memory: <unknown>/75%   2         6         2          10m
+NAME                       REFERENCE                         TARGETS                               MINPODS   MAXPODS   REPLICAS   AGE
+applications-service-hpa   Deployment/applications-service   cpu: 8%/60%, memory: 10%/75%          2         6         2          5d3h
+jobs-service-hpa           Deployment/jobs-service           cpu: <unknown>/60%, memory: 46%/75%   2         6         2          5d3h
 
 $ kubectl get secret -n jobboard
 NAME              TYPE     DATA   AGE
-postgres-secret   Opaque   3      10m
+postgres-secret   Opaque   3      5d3h
+
+$ kubectl get configmap jobboard-config -n jobboard
+NAME              DATA   AGE
+jobboard-config   3      5d3h
+
+$ kubectl get networkpolicy -n jobboard
+NAME                      POD-SELECTOR   AGE
+postgres-network-policy   app=postgres   5d3h
 
 --- storage class assigned to postgres-pvc ---
 standard

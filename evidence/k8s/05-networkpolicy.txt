@@ -1,3 +1,10 @@
+# BEFORE-STATE CAPTURE. This is the original run on minikube's default bridge CNI,
+# which accepts NetworkPolicy objects but does not enforce them - hence
+# 'CONNECTED (policy NOT enforced)' below. It is kept deliberately as the evidence
+# for the finding in SOLUTION-k8s.md Task 2.4.
+# The AFTER capture, on the rebuilt --cni=calico cluster where the policy genuinely
+# blocks unauthorised pods, is in evidence/21-networkpolicy-enforced.txt.
+
 ===== K8s Task 2.4: NetworkPolicy =====
 networkpolicy.networking.k8s.io/postgres-network-policy created
 

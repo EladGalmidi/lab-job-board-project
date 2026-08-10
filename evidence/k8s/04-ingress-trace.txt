@@ -1,48 +1,47 @@
 ===== K8s Task 2.1: trace POST /api/applications/ =====
+# Recaptured on the Calico cluster - see the note in 01-inventory.txt.
+
 NAME                   CLASS   HOSTS   ADDRESS        PORTS   AGE
-applications-ingress   nginx   *       192.168.49.2   80      11m
-frontend-ingress       nginx   *       192.168.49.2   80      11m
-jobs-ingress           nginx   *       192.168.49.2   80      11m
+applications-ingress   nginx   *       192.168.49.2   80      5d4h
+frontend-ingress       nginx   *       192.168.49.2   80      5d4h
+jobs-ingress           nginx   *       192.168.49.2   80      5d4h
 
 --- the request (through port-forward to the ingress controller) ---
-job_id: 6667d5e1-9f55-4e92-9dc8-663c2b2ce074
+job_id: 227f0072-b799-43b0-ab31-bfdade36c7f7
 > POST /api/applications/ HTTP/1.1
 > Host: localhost:18080
 > User-Agent: curl/8.18.0
 > Accept: */*
 > Content-Type: application/json
-> Content-Length: 110
+> Content-Length: 113
 > 
 < HTTP/1.1 201 Created
-< Date: Wed, 05 Aug 2026 06:02:55 GMT
+< Date: Mon, 10 Aug 2026 13:30:34 GMT
 < Content-Type: application/json; charset=utf-8
-< Content-Length: 233
+< Content-Length: 236
 < Connection: keep-alive
 < X-Powered-By: Express
 < Access-Control-Allow-Origin: *
-< ETag: W/"e9-Fs6ooSYY4eFnaGgJ/WuMeLXZ7/s"
+< ETag: W/"ec-uFtOC+zSmS+v4U6Z3HSMU2sBIgI"
 < 
 
 --- which pods back the service (label selector -> endpoints) ---
-Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
-NAME                   ENDPOINTS                           AGE
-applications-service   10.244.0.18:3001,10.244.0.20:3001   11m
-NAME                                    IP            LABELS
-applications-service-5b5f66b9bd-47lh2   10.244.0.18   applications-service
-applications-service-5b5f66b9bd-mvwx2   10.244.0.20   applications-service
+NAME                   ENDPOINTS                               AGE
+applications-service   10.244.120.69:3001,10.244.120.80:3001   5d4h
+applications-service-69fb75d65d-ckbd6   10.244.120.80   applications-service
+applications-service-69fb75d65d-v6bf2   10.244.120.69   applications-service
 
 ===== K8s Task 2.3: service types =====
-NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
-applications-service   ClusterIP   10.104.70.105   <none>        3001/TCP   11m
-frontend               ClusterIP   10.106.44.194   <none>        80/TCP     11m
-jobs-service           ClusterIP   10.101.55.34    <none>        8000/TCP   11m
-postgres               ClusterIP   10.96.121.28    <none>        5432/TCP   11m
+NAME                   TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+applications-service   ClusterIP   10.107.207.107   <none>        3001/TCP   5d4h
+frontend               ClusterIP   10.98.141.87     <none>        80/TCP     5d4h
+jobs-service           ClusterIP   10.103.145.195   <none>        8000/TCP   5d4h
+postgres               ClusterIP   10.105.40.217    <none>        5432/TCP   5d4h
 
---- patch frontend to NodePort ---
-service/frontend patched
-NAME       TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
-frontend   NodePort   10.106.44.194   <none>        80:31515/TCP   11m
---- restore to ClusterIP ---
-service/frontend patched
-NAME       TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
-frontend   ClusterIP   10.106.44.194   <none>        80/TCP    11m
+--- frontend patched to NodePort ---
+NAME       TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)        AGE
+frontend   NodePort   10.98.141.87   <none>        80:30467/TCP   5d4h
+
+--- restored to ClusterIP ---
+NAME       TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+frontend   ClusterIP   10.98.141.87   <none>        80/TCP    5d4h
