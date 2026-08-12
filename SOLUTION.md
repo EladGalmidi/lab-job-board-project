@@ -8,168 +8,19 @@ Part 2 (Kubernetes) is written up in [`SOLUTION-k8s.md`](SOLUTION-k8s.md).
 
 ---
 
-## Remediation pass — issues found, then fixed
+## Before you start: the project did not build as delivered
 
-An initial pass through the lab produced a set of honest findings that were *documented* rather
-than corrected. A second pass fixed them, because a documented-but-unfixed defect in a security
-or reliability control is worse than none: it manufactures false confidence. Each is marked
-**✅ FIXED** at the relevant section, with a re-measurement.
+Four defects in the provided repository had to be fixed before any task could be attempted —
+the build failed outright, the frontend crash-looped, `/api/jobs/` served the SPA instead of
+JSON, and two containers could never report healthy. They are listed here because they
+required edits to files the lab does not otherwise ask you to change:
+`applications-service/`, `frontend/nginx.conf`, `nginx/nginx.conf` and
+`jobs-service/app/main.py`.
 
-| # | Issue | Where | Status |
-|---|---|---|---|
-| 1 | Missing `package-lock.json` — build failed outright | both Node services | ✅ fixed |
-| 2 | `eserver` typo crash-looped the frontend | `frontend/nginx.conf` | ✅ fixed |
-| 3 | `/api/jobs/` returned the SPA as `text/html` instead of JSON | FastAPI routes + both proxies | ✅ fixed |
-| 4 | nginx healthchecks probed `localhost` on an IPv4-only listener | two Dockerfiles | ✅ fixed |
-| 5 | `/health` reported healthy with the database down | both services | ✅ fixed — Task 2.3 |
-| 6 | Security headers emitted twice | `frontend/nginx.conf` | ✅ fixed — Task 6.2 |
-| 7 | Rolling update dropped 2/218 requests | k8s deployments | ✅ fixed — K8s Task 4.2 |
-| 8 | NetworkPolicy accepted but **not enforced** | minikube CNI | ✅ fixed — K8s Task 2.4 |
-| 9 | Secret password stored twice in etcd via `kubectl apply` | k8s Secret | ✅ fixed — K8s Task 5.1 |
-| 10 | `CHANGE-CAUSE` empty on every revision | CI rollout | ✅ fixed — K8s Task 4.2 |
-| 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — K8s pre-work |
-
-Rows 1–6 are written up in this document. Rows 7–11 are Kubernetes issues and are written up
-in [`SOLUTION-k8s.md`](SOLUTION-k8s.md), at the section named in the Status column.
-
-One item is **deliberately not fixed**: the README's `http://localhost/api/jobs/docs` URL.
-It is a documentation error rather than a code defect, and making that exact path serve Swagger
-would require coordinated `root_path`/`openapi_url` changes across both the Compose proxy and
-the Kubernetes ingress for no functional gain. The working way to reach the API docs is
-documented in the pre-work section below.
-
----
-
-## Pre-work: four defects that stopped the lab from running
-
-The project as delivered does not build or run. These had to be fixed before any task could
-be attempted, and each is a separate commit so the change is auditable.
-
-### 1. Missing `package-lock.json` — the build fails outright
-
-`applications-service/Dockerfile` and `frontend/Dockerfile` both invoke `npm ci`, but no
-lockfile was committed anywhere in the repository:
-
-```
-target applications-service: failed to solve: process "/bin/sh -c npm ci --only=production"
-did not complete successfully: exit code: 1
-```
-
-`npm ci` exists specifically to install from a committed lockfile and refuses to run without
-one. The fix is to generate real lockfiles rather than to downgrade the command to
-`npm install`, because:
-
-- `npm ci` is what gives a reproducible dependency tree — swapping to `npm install` would let
-  the tree drift between builds, which contradicts Task 1's goal of deterministic images;
-- Task 4.2's `lint-test-node` stage runs `npm audit`, which needs a lockfile to resolve a
-  dependency graph at all.
-
-Lockfiles were generated inside `node:20-alpine` so the resolved tree matches the image that
-actually builds the app, not the host's Node version.
-
-### 2. `frontend/nginx.conf` starts with `eserver`
-
-```
-2026/08/05 04:43:23 [emerg] 1#1: unknown directive "eserver" in /etc/nginx/conf.d/default.conf:1
-```
-
-The first line reads `eserver {` instead of `server {`, so nginx aborted at startup and the
-frontend container crash-looped (`Restarting (1)`). Confirmed as an upstream typo, not a local
-artifact — the git blob `efb3202` and the raw GitHub file both contain the stray `e`.
-
-### 3. `/api/jobs/` returned the SPA instead of JSON
-
-The single most consequential defect: the job listing in the UI was broken, and the nginx
-container reported permanently unhealthy.
-
-`jobs-service/app/main.py` originally declared the collection routes without a trailing slash
-(`@app.get("/jobs")` only), while `nginx/nginx.conf` rewrote `^/api/jobs/(.*)` to `/jobs/$1`.
-A request for `/api/jobs/` therefore reached FastAPI as `/jobs/`, Starlette's
-`redirect_slashes` answered `307` to `http://localhost/jobs`, and that path no longer matched
-`location /api/jobs` — it fell through to `location /` and was proxied to the React frontend.
-
-Measured before the fix:
-
-```
-GET /api/jobs/          -> 307, Location: http://localhost/jobs
-  (following)           -> 200 text/html      <-- the SPA, not the API
-GET /api/jobs           -> 200 application/json
-GET /api/applications/  -> 200                <-- control: unaffected
-GET /api/applications   -> 200
-```
-
-The applications-service is immune because Express treats `/applications` and
-`/applications/` as the same route; FastAPI does not.
-
-**Fixed in two layers.** The proxy fix came first, but it only covered the Compose stack —
-the identical failure reappeared through the Kubernetes ingress (see `SOLUTION-k8s.md`
-pre-work), because the ingress does its own rewrite to `/jobs/$2`. Patching every proxy
-separately would mean the defect returns with the next one added, so the root cause was fixed
-in the application as well.
-
-1. **Application (the root cause).** The collection endpoints are now declared at *both*
-   paths, so no redirect is ever generated (`jobs-service/app/main.py:95-96`):
-
-   ```python
-   @app.get("/jobs", response_model=list[schemas.Job], tags=["Jobs"])
-   @app.get("/jobs/", response_model=list[schemas.Job], tags=["Jobs"], include_in_schema=False)
-   def list_jobs(...):
-   ```
-
-   `include_in_schema=False` keeps the alias out of the OpenAPI document so the docs still
-   show one canonical path. The same pairing is applied to `POST`.
-
-2. **Proxy (defence in depth).** `nginx/nginx.conf:73-74` still normalises the bare collection
-   path before the sub-path rule is considered, so the proxy never forwards a form the app
-   would have to redirect:
-
-   ```nginx
-   rewrite ^/api/jobs/?$   /jobs    break;   # /api/jobs and /api/jobs/ -> /jobs
-   rewrite ^/api/jobs/(.*) /jobs/$1 break;   # /api/jobs/{id}           -> /jobs/{id}
-   ```
-
-After the fix, `GET /api/jobs/` returns `200 application/json` through both the Compose proxy
-and the Kubernetes ingress. Two unit tests pin the behaviour —
-`test_jobs_collection_accepts_trailing_slash` and
-`test_jobs_collection_accepts_trailing_slash_on_post` — both asserting `follow_redirects=False`,
-because a `307` there *is* the bug.
-
-> Related documentation error: the README's `http://localhost/api/jobs/docs` cannot work — it
-> rewrites to `/jobs/docs`, which is not a FastAPI route. The Swagger UI lives at `/docs` on
-> the service itself, reachable with `docker compose exec jobs-service wget -qO- 127.0.0.1:8000/docs`
-> or by publishing the port.
-
-### 4. nginx healthchecks probed `localhost` on an IPv4-only listener
-
-Both nginx-based images reported `unhealthy` forever despite serving traffic correctly:
-
-```
-Output: "wget: can't connect to remote host: Connection refused"
-```
-
-Proven from inside the container:
-
-```
-wget --spider http://127.0.0.1:80/api/jobs/   -> exit 0
-wget --spider http://[::1]:80/api/jobs/       -> Connection refused
-netstat -tlnp -> tcp 0.0.0.0:80 LISTEN 1/nginx
-```
-
-`listen 80;` binds IPv4 only, `localhost` resolves to `::1` first inside the container, and
-busybox `wget` does not fall back to IPv4. The Python and Node services were unaffected —
-Node binds dual-stack, and Python's `urllib` retries across address families. Fixed by
-probing `127.0.0.1` in `nginx/Dockerfile` and `frontend/Dockerfile`.
-
-With all four fixed, every container reports healthy:
-
-```
-NAME                   STATUS
-applications-service   Up (healthy)
-jobboard-db            Up (healthy)
-jobboard-frontend      Up (healthy)
-jobs-service           Up (healthy)
-nginx-proxy            Up (healthy)
-```
+**Full analysis, with the failing output and the fix for each, is in
+[Appendix A](#appendix-a--defects-in-the-provided-project-and-the-remediation-pass).**
+A second pass then fixed several issues this document had originally only documented; that is
+covered in the same appendix.
 
 ---
 
@@ -285,7 +136,7 @@ none of them excluded `package-lock.json`, which matters now that the lockfiles 
 `jobs-service/.dockerignore` correctly excludes `tests/` — the pytest suite added in Task 4.3
 runs on the CI runner, not inside the image.
 
-**`HEALTHCHECK` audited** — two were broken and are fixed (see pre-work defect 4), and
+**`HEALTHCHECK` audited** — two were broken and are fixed (see Appendix A, defect 4), and
 `--only=production` was replaced with `--omit=dev` (deprecated in npm 9+).
 
 ### Results
@@ -773,7 +624,7 @@ so failing on them would be noise. Verified locally: both services currently exi
 
 *The integration test doubles as a regression guard.* Beyond the health and CRUD assertions,
 it explicitly checks that `GET /api/jobs/` returns `application/json` — the exact defect
-described in the pre-work section, where that path returned `text/html` from the SPA. It also
+described in Appendix A, where that path returned `text/html` from the SPA. It also
 asserts the CSP header from Task 6.2 is present.
 
 *`push-to-registry` is `main`-only and excludes pull requests.* `github.event_name != 'pull_request'`
@@ -815,7 +666,8 @@ The four required cases are covered by `test_health_returns_healthy`,
   an in-memory SQLite engine merely recreates an empty database rather than simulating an
   outage.
 - **Routing contract** (2) — both `/jobs` and `/jobs/` must serve the collection *directly*,
-  asserted with `follow_redirects=False`. A `307` there is the pre-work defect returning.
+  asserted with `follow_redirects=False`. A `307` there is the Appendix A routing defect
+  returning.
 - **Persistence, validation and listing** (6) — a created job is retrievable, `JobCreate`
   constraints are enforced rather than just presence, and the collection reflects what was
   written.
@@ -996,8 +848,7 @@ rewrite ^/api/applications$     /applications    break;
 **`/applications/`**. `break` stops rewrite processing and keeps the request in this location
 block. Express mounts the router at `/applications` and treats `/applications` and
 `/applications/` as the same route, so the trailing slash is harmless here — unlike the
-jobs-service, where the identical pattern caused the 307 redirect documented in the pre-work
-section.
+jobs-service, where the identical pattern caused the 307 redirect documented in Appendix A.
 
 **3. Which upstream container receives it, on which port**
 
@@ -1300,4 +1151,176 @@ kubectl apply -f k8s/08-seed-job.yaml
 
 # On Windows/docker driver the minikube IP is not routable from the host:
 kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80
+```
+
+
+---
+
+# Appendix A — defects in the provided project, and the remediation pass
+
+This appendix is background, not a graded task. It exists for one practical reason: the work
+below required changing files the six tasks never ask you to touch, and those changes should
+not look unexplained when this repository is compared against the original.
+
+## Remediation pass — issues found, then fixed
+
+An initial pass through the lab produced a set of honest findings that were *documented* rather
+than corrected. A second pass fixed them, because a documented-but-unfixed defect in a security
+or reliability control is worse than none: it manufactures false confidence. Each is marked
+**✅ FIXED** at the relevant section, with a re-measurement.
+
+| # | Issue | Where | Status |
+|---|---|---|---|
+| 1 | Missing `package-lock.json` — build failed outright | both Node services | ✅ fixed |
+| 2 | `eserver` typo crash-looped the frontend | `frontend/nginx.conf` | ✅ fixed |
+| 3 | `/api/jobs/` returned the SPA as `text/html` instead of JSON | FastAPI routes + both proxies | ✅ fixed |
+| 4 | nginx healthchecks probed `localhost` on an IPv4-only listener | two Dockerfiles | ✅ fixed |
+| 5 | `/health` reported healthy with the database down | both services | ✅ fixed — Task 2.3 |
+| 6 | Security headers emitted twice | `frontend/nginx.conf` | ✅ fixed — Task 6.2 |
+| 7 | Rolling update dropped 2/218 requests | k8s deployments | ✅ fixed — K8s Task 4.2 |
+| 8 | NetworkPolicy accepted but **not enforced** | minikube CNI | ✅ fixed — K8s Task 2.4 |
+| 9 | Secret password stored twice in etcd via `kubectl apply` | k8s Secret | ✅ fixed — K8s Task 5.1 |
+| 10 | `CHANGE-CAUSE` empty on every revision | CI rollout | ✅ fixed — K8s Task 4.2 |
+| 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — K8s pre-work |
+
+Rows 1–6 are written up in this document. Rows 7–11 are Kubernetes issues and are written up
+in [`SOLUTION-k8s.md`](SOLUTION-k8s.md), at the section named in the Status column.
+
+One item is **deliberately not fixed**: the README's `http://localhost/api/jobs/docs` URL.
+It is a documentation error rather than a code defect, and making that exact path serve Swagger
+would require coordinated `root_path`/`openapi_url` changes across both the Compose proxy and
+the Kubernetes ingress for no functional gain. The working way to reach the API docs is
+documented in the pre-work section below.
+
+---
+
+## Pre-work: four defects that stopped the lab from running
+
+The project as delivered does not build or run. These had to be fixed before any task could
+be attempted, and each is a separate commit so the change is auditable.
+
+### 1. Missing `package-lock.json` — the build fails outright
+
+`applications-service/Dockerfile` and `frontend/Dockerfile` both invoke `npm ci`, but no
+lockfile was committed anywhere in the repository:
+
+```
+target applications-service: failed to solve: process "/bin/sh -c npm ci --only=production"
+did not complete successfully: exit code: 1
+```
+
+`npm ci` exists specifically to install from a committed lockfile and refuses to run without
+one. The fix is to generate real lockfiles rather than to downgrade the command to
+`npm install`, because:
+
+- `npm ci` is what gives a reproducible dependency tree — swapping to `npm install` would let
+  the tree drift between builds, which contradicts Task 1's goal of deterministic images;
+- Task 4.2's `lint-test-node` stage runs `npm audit`, which needs a lockfile to resolve a
+  dependency graph at all.
+
+Lockfiles were generated inside `node:20-alpine` so the resolved tree matches the image that
+actually builds the app, not the host's Node version.
+
+### 2. `frontend/nginx.conf` starts with `eserver`
+
+```
+2026/08/05 04:43:23 [emerg] 1#1: unknown directive "eserver" in /etc/nginx/conf.d/default.conf:1
+```
+
+The first line reads `eserver {` instead of `server {`, so nginx aborted at startup and the
+frontend container crash-looped (`Restarting (1)`). Confirmed as an upstream typo, not a local
+artifact — the git blob `efb3202` and the raw GitHub file both contain the stray `e`.
+
+### 3. `/api/jobs/` returned the SPA instead of JSON
+
+The single most consequential defect: the job listing in the UI was broken, and the nginx
+container reported permanently unhealthy.
+
+`jobs-service/app/main.py` originally declared the collection routes without a trailing slash
+(`@app.get("/jobs")` only), while `nginx/nginx.conf` rewrote `^/api/jobs/(.*)` to `/jobs/$1`.
+A request for `/api/jobs/` therefore reached FastAPI as `/jobs/`, Starlette's
+`redirect_slashes` answered `307` to `http://localhost/jobs`, and that path no longer matched
+`location /api/jobs` — it fell through to `location /` and was proxied to the React frontend.
+
+Measured before the fix:
+
+```
+GET /api/jobs/          -> 307, Location: http://localhost/jobs
+  (following)           -> 200 text/html      <-- the SPA, not the API
+GET /api/jobs           -> 200 application/json
+GET /api/applications/  -> 200                <-- control: unaffected
+GET /api/applications   -> 200
+```
+
+The applications-service is immune because Express treats `/applications` and
+`/applications/` as the same route; FastAPI does not.
+
+**Fixed in two layers.** The proxy fix came first, but it only covered the Compose stack —
+the identical failure reappeared through the Kubernetes ingress (see `SOLUTION-k8s.md`
+pre-work), because the ingress does its own rewrite to `/jobs/$2`. Patching every proxy
+separately would mean the defect returns with the next one added, so the root cause was fixed
+in the application as well.
+
+1. **Application (the root cause).** The collection endpoints are now declared at *both*
+   paths, so no redirect is ever generated (`jobs-service/app/main.py:95-96`):
+
+   ```python
+   @app.get("/jobs", response_model=list[schemas.Job], tags=["Jobs"])
+   @app.get("/jobs/", response_model=list[schemas.Job], tags=["Jobs"], include_in_schema=False)
+   def list_jobs(...):
+   ```
+
+   `include_in_schema=False` keeps the alias out of the OpenAPI document so the docs still
+   show one canonical path. The same pairing is applied to `POST`.
+
+2. **Proxy (defence in depth).** `nginx/nginx.conf:73-74` still normalises the bare collection
+   path before the sub-path rule is considered, so the proxy never forwards a form the app
+   would have to redirect:
+
+   ```nginx
+   rewrite ^/api/jobs/?$   /jobs    break;   # /api/jobs and /api/jobs/ -> /jobs
+   rewrite ^/api/jobs/(.*) /jobs/$1 break;   # /api/jobs/{id}           -> /jobs/{id}
+   ```
+
+After the fix, `GET /api/jobs/` returns `200 application/json` through both the Compose proxy
+and the Kubernetes ingress. Two unit tests pin the behaviour —
+`test_jobs_collection_accepts_trailing_slash` and
+`test_jobs_collection_accepts_trailing_slash_on_post` — both asserting `follow_redirects=False`,
+because a `307` there *is* the bug.
+
+> Related documentation error: the README's `http://localhost/api/jobs/docs` cannot work — it
+> rewrites to `/jobs/docs`, which is not a FastAPI route. The Swagger UI lives at `/docs` on
+> the service itself, reachable with `docker compose exec jobs-service wget -qO- 127.0.0.1:8000/docs`
+> or by publishing the port.
+
+### 4. nginx healthchecks probed `localhost` on an IPv4-only listener
+
+Both nginx-based images reported `unhealthy` forever despite serving traffic correctly:
+
+```
+Output: "wget: can't connect to remote host: Connection refused"
+```
+
+Proven from inside the container:
+
+```
+wget --spider http://127.0.0.1:80/api/jobs/   -> exit 0
+wget --spider http://[::1]:80/api/jobs/       -> Connection refused
+netstat -tlnp -> tcp 0.0.0.0:80 LISTEN 1/nginx
+```
+
+`listen 80;` binds IPv4 only, `localhost` resolves to `::1` first inside the container, and
+busybox `wget` does not fall back to IPv4. The Python and Node services were unaffected —
+Node binds dual-stack, and Python's `urllib` retries across address families. Fixed by
+probing `127.0.0.1` in `nginx/Dockerfile` and `frontend/Dockerfile`.
+
+With all four fixed, every container reports healthy:
+
+```
+NAME                   STATUS
+applications-service   Up (healthy)
+jobboard-db            Up (healthy)
+jobboard-frontend      Up (healthy)
+jobs-service           Up (healthy)
+nginx-proxy            Up (healthy)
 ```
