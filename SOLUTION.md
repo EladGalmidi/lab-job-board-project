@@ -1125,7 +1125,7 @@ Part 2 (Kubernetes) is written up separately in [`SOLUTION-k8s.md`](SOLUTION-k8s
 > Note on item 7: `minikube ip` is not routable from Windows with the docker driver, so the
 > ingress is reached either via `minikube tunnel` (needs elevation) or
 > `kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80`, which is
-> what the screenshot shows. See the K8s pre-work notes.
+> what the screenshot shows. See Appendix A of [`SOLUTION-k8s.md`](SOLUTION-k8s.md).
 
 ### Reproducing the verified state
 
@@ -1181,7 +1181,7 @@ or reliability control is worse than none: it manufactures false confidence. Eac
 | 8 | NetworkPolicy accepted but **not enforced** | minikube CNI | ✅ fixed — K8s Task 2.4 |
 | 9 | Secret password stored twice in etcd via `kubectl apply` | k8s Secret | ✅ fixed — K8s Task 5.1 |
 | 10 | `CHANGE-CAUSE` empty on every revision | CI rollout | ✅ fixed — K8s Task 4.2 |
-| 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — K8s pre-work |
+| 11 | `DATABASE_URL` built by YAML interpolation, unencoded | k8s manifests | ✅ fixed — `SOLUTION-k8s.md` Appendix A |
 
 Rows 1–6 are written up in this document. Rows 7–11 are Kubernetes issues and are written up
 in [`SOLUTION-k8s.md`](SOLUTION-k8s.md), at the section named in the Status column.
@@ -1257,7 +1257,7 @@ The applications-service is immune because Express treats `/applications` and
 
 **Fixed in two layers.** The proxy fix came first, but it only covered the Compose stack —
 the identical failure reappeared through the Kubernetes ingress (see `SOLUTION-k8s.md`
-pre-work), because the ingress does its own rewrite to `/jobs/$2`. Patching every proxy
+Appendix A), because the ingress does its own rewrite to `/jobs/$2`. Patching every proxy
 separately would mean the defect returns with the next one added, so the root cause was fixed
 in the application as well.
 

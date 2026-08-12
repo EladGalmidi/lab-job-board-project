@@ -13,115 +13,20 @@ Part 1 (Docker Compose) is written up in [`SOLUTION.md`](SOLUTION.md).
 
 ---
 
-## Remediation pass — Kubernetes issues found, then fixed
+## Before you start: the manifests did not work as delivered
 
-| # | Issue | Status | Section |
-|---|---|---|---|
-| 1 | `DATABASE_URL` built by YAML `$(VAR)` interpolation with no percent-encoding — an `openssl rand -base64` password containing `/` produced `ERR_INVALID_URL` and crash-looped the Node service | ✅ fixed | Pre-work |
-| 2 | Ingress rewrite produced `/jobs/`, which FastAPI 307-redirected out of the service | ✅ fixed | Pre-work |
-| 3 | NetworkPolicy accepted by the API server but **not enforced** by the CNI | ✅ fixed | Task 2.4 |
-| 4 | Rolling update dropped 2/218 requests — no `preStop`, no graceful shutdown | ✅ fixed | Task 4.2 |
-| 5 | `CHANGE-CAUSE` `<none>` on every revision | ✅ fixed | Task 4.2 |
-| 6 | Secret password written a second time into `last-applied-configuration` | ✅ fixed | Task 5.1 |
-| 7 | `readinessProbe` pointed at a `/health` that never touched the database | ✅ fixed | Task 6.2 |
-| 8 | `commonLabels` injected labels into **selectors**, silently widening the NetworkPolicy's `podSelector` | ✅ fixed | Task 2.4 |
+Two defects in the provided `k8s/` manifests had to be fixed before the stack would run:
+`DATABASE_URL` was assembled by YAML `$(VAR)` substitution, which does not percent-encode — so
+a password generated exactly as `README-k8s.md` instructs crashed the Node service with
+`ERR_INVALID_URL` — and the ingress rewrite produced a path FastAPI redirected straight back
+out of the service. Both required edits to files the lab asks you to deploy rather than
+rewrite: `k8s/03-jobs-service.yaml` and `k8s/04-applications-service.yaml`.
 
----
-
-## Pre-work: two defects that stopped the cluster from working
-
-### 1. `applications-service` crashed with `ERR_INVALID_URL`
-
-Both pods went straight into `CrashLoopBackOff`:
-
-```
-code: 'ERR_INVALID_URL',
-input: '*****REDACTED*****',
-base: 'postgres://base'
-    at initDB (/app/src/db.js:75:14)
-```
-
-The manifests built the connection string by YAML interpolation:
-
-```yaml
-- name: DATABASE_URL
-  value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
-```
-
-Kubernetes expands `$(VAR)` by **plain textual substitution with no encoding**. `README-k8s.md`
-Step 3 instructs you to generate the password with `openssl rand -base64 20`, and the base64
-alphabet includes `+`, `/` and `=`. A `/` inside the password terminates the authority
-component of the URI, so the resulting string is malformed and `new URL()` rejects it.
-
-This is not a minikube quirk — it would break any cluster, and it will break intermittently
-depending on which characters `openssl` happens to emit, which is the worst kind of bug.
-
-**Fix.** Remove the hand-built `DATABASE_URL` from both deployment manifests and let the
-application compose the URL, percent-encoding the credentials — the same approach already used
-for Docker secrets in Part 1 Task 6.1. `build_database_url()` in `jobs-service/app/database.py`
-and `buildConnectionString()` in `applications-service/src/db.js` now resolve configuration in
-precedence order: `DB_PASSWORD_FILE` → `DATABASE_URL` → discrete `POSTGRES_*` variables. The
-manifests pass only the parts:
-
-```yaml
-- name: POSTGRES_HOST
-  value: postgres
-- name: POSTGRES_PORT
-  value: "5432"
-```
-
-Encoding belongs in the one place that can do it correctly. YAML cannot.
-
-### 2. `/api/jobs` returned 307 through the Ingress
-
-The trailing-slash defect documented in `SOLUTION.md` reproduced here as predicted, because
-the ingress `rewrite-target: /jobs/$2` produces `/jobs/` for both `/api/jobs` and
-`/api/jobs/`:
-
-```
-GET /api/jobs          -> 307
-GET /api/jobs/         -> 307
-GET /api/applications/ -> 200 application/json
-GET /                  -> 200 text/html
-```
-
-For Part 1 this was patched in the nginx config, but having to compensate in *every* proxy is
-the signal that the fix belongs in the application. The README's own API reference documents
-these endpoints **with** a trailing slash and the frontend calls them that way, so the route
-declarations were simply wrong. `app/main.py` now registers the collection endpoints at both
-`/jobs` and `/jobs/`. After the fix:
-
-```
-GET /api/jobs          -> 200 application/json
-GET /api/jobs/         -> 200 application/json
-GET /api/applications/ -> 200 application/json
-GET /                  -> 200 text/html
-```
-
-No proxy compensates for it any more, and `test_jobs_collection_accepts_trailing_slash` guards
-the behaviour in CI.
-
-### Note on reaching the cluster from Windows
-
-`minikube ip` returns `192.168.49.2`, but with the **docker driver on Windows that address is
-inside the WSL2 network and is not routable from the host**:
-
-```
-$ curl http://192.168.49.2/api/jobs   ->  000 (unreachable)
-```
-
-minikube says so at startup: *"please run `minikube tunnel` and your ingress resources would be
-available at 127.0.0.1"*. `minikube tunnel` needs an elevated shell, so all ingress testing
-below instead used a port-forward to the ingress controller itself, which still exercises the
-real controller, the real Ingress objects and the real rewrite rules:
-
-```bash
-kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80
-```
-
-Port 18080 rather than 8080, because 8080 was already occupied on this host — the first attempt
-silently returned a **403 from an unrelated application** rather than from the cluster, which is
-a good reminder to verify *what* answered, not just that something did.
+**Full analysis, with the failing output and the fix for each, is in
+[Appendix A](#appendix-a--defects-in-the-provided-manifests-and-the-remediation-pass).**
+A second pass then fixed several issues this document had originally only documented —
+most importantly a NetworkPolicy that was accepted but never enforced. That is covered in the
+same appendix and marked **✅ FIXED** at each relevant task.
 
 ---
 
@@ -1185,7 +1090,7 @@ the container and must not be coupled to an external dependency.
 
 | File | Change | Why |
 |---|---|---|
-| `k8s/03-jobs-service.yaml` | Removed YAML-built `DATABASE_URL`; added `POSTGRES_HOST`/`POSTGRES_PORT`; added `envFrom` ConfigMap | `$(VAR)` substitution does not URL-encode (pre-work 1); Task 5.2 |
+| `k8s/03-jobs-service.yaml` | Removed YAML-built `DATABASE_URL`; added `POSTGRES_HOST`/`POSTGRES_PORT`; added `envFrom` ConfigMap | `$(VAR)` substitution does not URL-encode (Appendix A, defect 1); Task 5.2 |
 | `k8s/04-applications-service.yaml` | Removed YAML-built `DATABASE_URL`; added `POSTGRES_HOST`/`POSTGRES_PORT` | Fixed `ERR_INVALID_URL` crash loop |
 | `k8s/09-network-policy.yaml` | **New** | Task 2.4 |
 | `k8s/10-configmap.yaml` | **New** | Task 5.2 |
@@ -1220,3 +1125,122 @@ four ClusterIP addresses match exactly (`postgres` 10.105.40.217, `jobs-service`
 (`postgres` 1/1, the other three 2/2). The HPA memory percentages differ slightly from the
 Task 4.3 capture (33%/48% versus 13%/46%) simply because those are live gauges read at
 different moments; the CPU figures and the 2/6 min/max bounds are identical.
+
+
+---
+
+# Appendix A — defects in the provided manifests, and the remediation pass
+
+This appendix is background, not a graded task. It exists for one practical reason: the work
+below required changing manifests the lab expects you to apply as-is, and those changes should
+not look unexplained when this repository is compared against the original.
+
+## Remediation pass — Kubernetes issues found, then fixed
+
+| # | Issue | Status | Section |
+|---|---|---|---|
+| 1 | `DATABASE_URL` built by YAML `$(VAR)` interpolation with no percent-encoding — an `openssl rand -base64` password containing `/` produced `ERR_INVALID_URL` and crash-looped the Node service | ✅ fixed | Pre-work |
+| 2 | Ingress rewrite produced `/jobs/`, which FastAPI 307-redirected out of the service | ✅ fixed | Pre-work |
+| 3 | NetworkPolicy accepted by the API server but **not enforced** by the CNI | ✅ fixed | Task 2.4 |
+| 4 | Rolling update dropped 2/218 requests — no `preStop`, no graceful shutdown | ✅ fixed | Task 4.2 |
+| 5 | `CHANGE-CAUSE` `<none>` on every revision | ✅ fixed | Task 4.2 |
+| 6 | Secret password written a second time into `last-applied-configuration` | ✅ fixed | Task 5.1 |
+| 7 | `readinessProbe` pointed at a `/health` that never touched the database | ✅ fixed | Task 6.2 |
+| 8 | `commonLabels` injected labels into **selectors**, silently widening the NetworkPolicy's `podSelector` | ✅ fixed | Task 2.4 |
+
+---
+
+## Pre-work: two defects that stopped the cluster from working
+
+### 1. `applications-service` crashed with `ERR_INVALID_URL`
+
+Both pods went straight into `CrashLoopBackOff`:
+
+```
+code: 'ERR_INVALID_URL',
+input: '*****REDACTED*****',
+base: 'postgres://base'
+    at initDB (/app/src/db.js:75:14)
+```
+
+The manifests built the connection string by YAML interpolation:
+
+```yaml
+- name: DATABASE_URL
+  value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+```
+
+Kubernetes expands `$(VAR)` by **plain textual substitution with no encoding**. `README-k8s.md`
+Step 3 instructs you to generate the password with `openssl rand -base64 20`, and the base64
+alphabet includes `+`, `/` and `=`. A `/` inside the password terminates the authority
+component of the URI, so the resulting string is malformed and `new URL()` rejects it.
+
+This is not a minikube quirk — it would break any cluster, and it will break intermittently
+depending on which characters `openssl` happens to emit, which is the worst kind of bug.
+
+**Fix.** Remove the hand-built `DATABASE_URL` from both deployment manifests and let the
+application compose the URL, percent-encoding the credentials — the same approach already used
+for Docker secrets in Part 1 Task 6.1. `build_database_url()` in `jobs-service/app/database.py`
+and `buildConnectionString()` in `applications-service/src/db.js` now resolve configuration in
+precedence order: `DB_PASSWORD_FILE` → `DATABASE_URL` → discrete `POSTGRES_*` variables. The
+manifests pass only the parts:
+
+```yaml
+- name: POSTGRES_HOST
+  value: postgres
+- name: POSTGRES_PORT
+  value: "5432"
+```
+
+Encoding belongs in the one place that can do it correctly. YAML cannot.
+
+### 2. `/api/jobs` returned 307 through the Ingress
+
+The trailing-slash defect documented in `SOLUTION.md` reproduced here as predicted, because
+the ingress `rewrite-target: /jobs/$2` produces `/jobs/` for both `/api/jobs` and
+`/api/jobs/`:
+
+```
+GET /api/jobs          -> 307
+GET /api/jobs/         -> 307
+GET /api/applications/ -> 200 application/json
+GET /                  -> 200 text/html
+```
+
+For Part 1 this was patched in the nginx config, but having to compensate in *every* proxy is
+the signal that the fix belongs in the application. The README's own API reference documents
+these endpoints **with** a trailing slash and the frontend calls them that way, so the route
+declarations were simply wrong. `app/main.py` now registers the collection endpoints at both
+`/jobs` and `/jobs/`. After the fix:
+
+```
+GET /api/jobs          -> 200 application/json
+GET /api/jobs/         -> 200 application/json
+GET /api/applications/ -> 200 application/json
+GET /                  -> 200 text/html
+```
+
+No proxy compensates for it any more, and `test_jobs_collection_accepts_trailing_slash` guards
+the behaviour in CI.
+
+### Note on reaching the cluster from Windows
+
+`minikube ip` returns `192.168.49.2`, but with the **docker driver on Windows that address is
+inside the WSL2 network and is not routable from the host**:
+
+```
+$ curl http://192.168.49.2/api/jobs   ->  000 (unreachable)
+```
+
+minikube says so at startup: *"please run `minikube tunnel` and your ingress resources would be
+available at 127.0.0.1"*. `minikube tunnel` needs an elevated shell, so all ingress testing
+below instead used a port-forward to the ingress controller itself, which still exercises the
+real controller, the real Ingress objects and the real rewrite rules:
+
+```bash
+kubectl port-forward -n ingress-nginx service/ingress-nginx-controller 18080:80
+```
+
+Port 18080 rather than 8080, because 8080 was already occupied on this host — the first attempt
+silently returned a **403 from an unrelated application** rather than from the cluster, which is
+a good reminder to verify *what* answered, not just that something did.
